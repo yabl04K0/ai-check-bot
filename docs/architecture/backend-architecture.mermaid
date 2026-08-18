@@ -1,0 +1,142 @@
+flowchart TB
+    subgraph ENTRY["ВХОД"]
+        E1["👤 Кнопка в боте:\nЧЕК / LITE ЧЕК + комментарий"]
+        E2["⏰ Автопланировщик (APScheduler)\nтик каждые N минут"]
+        E3["🐙 GitHub webhook (опц.)\nновый issue → предложить ЧЕК"]
+    end
+
+    subgraph QUEUE["ОЧЕРЕДЬ ЗАДАЧ — SQLite-таблица jobs, как в AutoPost scheduler"]
+        Q1["Новая задача → INSERT в jobs\nстатус: queued"]
+        Q2{"Уже что-то\nвыполняется?"}
+        Q3["Показать позицию в очереди\nпользователю"]
+        Q4["Взять в работу\nстатус: running"]
+    end
+    E1 --> Q1
+    Q1 --> Q2
+    Q2 -->|"Да"| Q3 --> Q1
+    Q2 -->|"Нет"| Q4
+
+    subgraph AUTOGATE["АВТОЧЕК — выкл по умолчанию, включается в Настройках"]
+        A0{"< 60% недельной\nквоты осталось?"}
+        A1{"< 1ч до сброса\nнедельного лимита?"}
+        A2{"< 90% квоты\nуже использовано?"}
+        A3F["🔴 ПРИОРИТЕТ: FULL ЧЕК\nна всех авточек-проектах"]
+        A3L["🟢 LITE ЧЕК\nна всех авточек-проектах"]
+        A4["Ждать следующего тика"]
+        NOTE_Q["⚠️ Официального API учёта квоты у Anthropic нет —\nбот оценивает % по своим логам расхода токенов,\nэто ПРИБЛИЗИТЕЛЬНО, не точная цифра из кабинета"]
+    end
+    E2 --> A0
+    A0 -->|"Да, дальше не проверяем"| A3F
+    A0 -->|"Нет"| A1
+    A1 -->|"Да"| A2
+    A1 -->|"Нет"| A4
+    A2 -->|"Да"| A3L
+    A2 -->|"Нет"| A4
+    A3F --> Q1
+    A3L --> Q1
+    AUTOGATE -.- NOTE_Q
+
+    subgraph ROUTE["ВЫБОР РЕЖИМА"]
+        R1{"Full или Lite?"}
+    end
+    Q4 --> R1
+
+    %% ==== FULL: реальный протокол ЧЕК ====
+    subgraph FULLFLOW["🔴 FULL ЧЕК — CHEK_PROTOCOL.md, 13 шагов"]
+        direction TB
+        ORCH_F["Opus — оркестратор\nШаги 1-4: реестр, тесты, логи, sweep"]
+        WEB["Sonnet: web-researcher (4b)\nтолько если триггер сработал"]
+        PLAN["Opus: fleet-planner (5)\nделит проект на N доменов"]
+        CHECK["Sonnet ×N: fleet-checkers (6)\nпараллельно, read-only"]
+        AGG["Orchestrator: агрегация (7)\n+ coverage-check"]
+        GAP["Sonnet: gap-finder (8)"]
+        FIX["Sonnet: fixer (9)"]
+        CRIT["Opus ×2: critic-A + critic-B (10)\nразные фокусы, параллельно"]
+        LOOP["Convergence loop (11)\nfix↔verify, до 3 раундов,\nescalated если не сошлось"]
+        TEST["Sonnet: test-writer (12)\n+ ОБЯЗАТЕЛЬНЫЙ stash-check"]
+        HUMAN["Human confirm + commit (13)\nagent НИКОГДА не коммитит сам"]
+        ORCH_F --> WEB --> PLAN --> CHECK --> AGG --> GAP --> FIX --> CRIT --> LOOP --> TEST --> HUMAN
+    end
+    R1 -->|"Full"| ORCH_F
+
+    subgraph DELEGATE["ДЕЛЕГИРОВАНИЕ ФЛОТА — тиры по DELEGATION.md"]
+        D1["Tier 1: Cursor Agent CLI\ncursor-agent -p, если подписка жива"]
+        D2["Tier 2: свои саб-агенты Claude Code\n(тратит бюджет Max 5x)"]
+        D3["Tier 3: без агентов\nтолько шаги 1-4 руками, 5-12 ждут"]
+        D4["⚠️ Известные грабли: SOCKS5-прокси не работает\nс cursor-agent — нужен HTTP-прокси;\nповторный запуск editing-ролей НЕ идемпотентен"]
+    end
+    CHECK -.выполняется через.-> D1
+    D1 -.нет подписки.-> D2
+    D2 -.нет бюджета.-> D3
+    DELEGATE -.- D4
+
+    %% ==== LITE ====
+    subgraph LITEFLOW["🟢 LITE ЧЕК — сокращённый прогон"]
+        direction TB
+        ORCH_L["Sonnet — оркестратор\nШаги 1-4 как в Full"]
+        LOCAL["Локальная LLM (RTX 3060)\nроль scout+runner:\ngrep-паттерны + быстрый скан логов"]
+        LFIX["Sonnet: fixer,\nтолько если найдено и явно попросили"]
+        LREPORT["Отчёт без Opus-критиков\n(рекомендация: догнать Full)"]
+        ORCH_L --> LOCAL --> LFIX --> LREPORT
+    end
+    R1 -->|"Lite"| ORCH_L
+
+    subgraph INTERRUPT["ОБРЫВ ПО ЛИМИТУ — HANDOVER-паттерн"]
+        I1{"Упёрлись в квоту\nсреди прогона?"}
+        I2["Записать HANDOVER-запись:\nчто сделано, на каком шаге,\nчто открыто, что дальше"]
+        I3["Задача → назад в очередь\nсо статусом paused_quota"]
+        I4["Возобновить автоматически\nпосле сброса лимита"]
+    end
+    CHECK -.- I1
+    ORCH_L -.- I1
+    I1 -->|"Да"| I2 --> I3 --> I4 --> Q1
+
+    subgraph PROGRESS["ПРОГРЕСС-БАР В БОТЕ"]
+        P1["% = завершённые шаги / всего\nFull: 13 шагов · Lite: 4 шага\nодно сообщение редактируется,\nCancel/Pause прямо в нём"]
+    end
+    CHECK -.обновляет.-> P1
+    LOCAL -.обновляет.-> P1
+
+    subgraph STORAGE["ХРАНЕНИЕ — источник истины vs кэш"]
+        S1["chek_open/never/later.md\nВ КАЖДОМ РЕПО — источник истины\n(так же, как сейчас у тебя)"]
+        S2["SQLite в боте — кэш для UI:\nбыстрый список без похода в GitHub\nна каждый тап кнопки"]
+        S3["Синк: после Step 13\nбот читает актуальные .md через\nGitHub API и обновляет кэш"]
+    end
+    HUMAN -->|"routing по решению юзера"| S1
+    S1 --> S3 --> S2
+    LREPORT -.находки без фикса тоже.-> S1
+
+    subgraph GITHUB["🐙 GITHUB-МОДУЛЬ"]
+        G1["Fine-grained токен,\nхранится в .env бота ОДИН РАЗ\n(не в чате)"]
+        G2["Scope: Contents (rw) + Administration (только visibility)\nНЕ delete_repo — токен физически не может\nудалить репо или историю коммитов"]
+        G3["Список / открыть / закрыть репо\n(удаление НЕ реализовано — принципиально)"]
+        G4["После Step 13 (human confirm):\nбот может push сам,\nвместо ручного git-клиента"]
+        G5["Автоматическая ротация:\nнапоминание переиздать токен\nкаждые 30 дней"]
+    end
+    HUMAN -.опционально.-> G4
+    G4 --> S3
+
+    subgraph NOTIFY["УВЕДОМЛЕНИЯ — паттерн DM_USER"]
+        N1["Сообщение в тот же чат\nОБЯЗАТЕЛЬНАЯ OK-кнопка\n(callback_data=error_dismiss)"]
+        N2["Лог в STATE_LOG-стиле:\nappend-only аудит действий бота"]
+    end
+    HUMAN --> N1
+    LREPORT --> N1
+    A3F -.после завершения.-> N1
+    A3L -.после завершения.-> N1
+    N1 --> N2
+    G3 --> N2
+
+    classDef full fill:#5f1e1e,stroke:#a53b3b,color:#fff
+    classDef lite fill:#2d5016,stroke:#4a7c2a,color:#fff
+    classDef gate fill:#5f4b1e,stroke:#a5843b,color:#fff
+    classDef store fill:#1e3a5f,stroke:#3b6ea5,color:#fff
+    classDef gh fill:#3a2d5f,stroke:#6a4ba5,color:#fff
+    classDef warn fill:#3a1e1e,stroke:#a53b3b,color:#ff9
+
+    class ORCH_F,PLAN,CRIT,A3F full
+    class ORCH_L,LOCAL,A3L lite
+    class A0,A1,A2,A4 gate
+    class S1,S2,S3 store
+    class G1,G2,G3,G4,G5 gh
+    class NOTE_Q,D4 warn

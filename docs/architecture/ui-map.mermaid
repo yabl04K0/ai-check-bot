@@ -1,0 +1,166 @@
+flowchart TD
+    START(["/start — первый запуск"]) --> ONB["👋 Онбординг:\nвведи GitHub-токен разово\n(сохранится на сервере, не в чате)"]
+    ONB --> MAIN
+
+    RESTART(["/start — повторный вход"]) --> MAIN
+
+    subgraph HEADER["ШАПКА ГЛАВНОГО МЕНЮ — прикреплённое сообщение"]
+        H1["📊 Неделя: Sonnet ~42% · Opus ~18% (оценка)\n🖥️ Локалка: online · 🐙 GitHub: подключен\n⏰ Автопланировщик: выкл"]
+    end
+
+    MAIN["🏠 ГЛАВНОЕ МЕНЮ"]
+    H1 -.обновляется по крону.-> MAIN
+
+    MAIN --> BTN_FULL["🔴 ЧЕК"]
+    MAIN --> BTN_LITE["🟢 LITE ЧЕК"]
+    MAIN --> BTN_PROJ["📁 Проекты"]
+    MAIN --> BTN_REG["📜 Реестр (все)"]
+    MAIN --> BTN_HIST["🕘 История ЧЕКов"]
+    MAIN --> BTN_SET["⚙️ Настройки"]
+    MAIN --> BTN_GH["🐙 GitHub"]
+    MAIN --> BTN_ADMIN["👑 Админка"]
+
+    %% ==== ВЫБОР ПРОЕКТА ====
+    BTN_PROJ --> PROJLIST["AutoPost · MeCelium · sd-forge-bot\nserver-monitor · AutoPostCheck\n🤖 этот-же-бот (self-check)\nтап = чекбокс · ⚙️ = настройки\n+ Добавить проект / Удалить"]
+    PROJLIST -->|"чекбокс(ы) + Далее"| SELPROJ1
+    PROJLIST -->|"⚙️ у конкретного проекта"| PSET
+    PROJLIST -.- SELFNOTE["⚠️ Self-check нюанс: если фикс правит код\nсамого бота — рестарт применяет патч,\nно ломает текущий прогон.\nРекомендация: self-check фиксит,\nно НЕ автопушит без ручного подтверждения\nдаже если это разрешено для других проектов"]
+
+    %% ==== ЗАПУСК ЧЕКА ====
+    BTN_FULL --> SELPROJ1{"Проект(ы)?\n(мультивыбор)"}
+    BTN_LITE --> SELPROJ2{"Проект(ы)?"}
+    SELPROJ1 --> SCOPE1{"Скоуп?"}
+    SELPROJ2 --> SCOPE2{"Скоуп?"}
+    SCOPE1 -->|"Всё / ЧЕК всё / Файл-модуль"| COMMENT1
+    SCOPE2 --> COMMENT2
+
+    COMMENT1["💬 Комментарий?\nчто чекать / не чекать / что пофиксить"]
+    COMMENT2["💬 Комментарий?"]
+    COMMENT1 -->|"Текст / Пропустить"| CONFIRM1
+    COMMENT2 -->|"Текст / Пропустить"| CONFIRM2
+
+    CONFIRM1["✅ Запустить ЧЕК\nOpus + Sonnet + Haiku, 13 шагов\n(или сразу в очередь, если занято)"]
+    CONFIRM2["✅ Запустить LITE\nSonnet + локалка"]
+
+    %% ==== ПРОГРЕСС ====
+    CONFIRM1 --> PROG["📊 ПРОГРЕСС (одно сообщение)\n▓▓▓▓▓▓░░░░ 62%\nШаг 6/13: fleet-checkers (сонет ×8)\n⏸ Пауза   ✖ Отмена"]
+    CONFIRM2 --> PROGL["📊 ПРОГРЕСС LITE\n▓▓▓▓▓▓▓░░░ 70%\nЛокалка сканит логи проекта 3/5\n✖ Отмена"]
+
+    PROG -->|"квота кончилась"| INTERRUPTED["⏸ Приостановлено: лимит\nВозобновится автоматически\nпосле сброса (~Хч)"]
+    INTERRUPTED --> MAIN
+
+    PROG --> REPORT
+    PROGL --> REPORTL
+
+    %% ==== ОТЧЁТ ====
+    REPORT["📋 ОТЧЁТ\n🟥 КРИТИЧНО: 2 · 🟧 ВЫСОКИЙ: 5 · 🟨 СРЕДНИЙ: 3\nТесты: 41/43 · git diff: 4 файла\nКнопки ниже ⬇️"]
+    REPORTL["📋 ОТЧЁТ LITE\nНайдено: 3 · Тесты: OK\n(рекомендация: догнать Full ЧЕК)"]
+
+    REPORT --> ACT1["🔧 Фикс всё"]
+    REPORT --> ACT1B["🎯 Фикс выборочно"]
+    REPORT --> ACT2["⏭️ Отложить"]
+    REPORT --> ACT3["🚫 Не баг"]
+    REPORT --> ACT4["🔍 Детали по пункту"]
+    REPORT --> ACT5["OK"]
+
+    REPORTL --> ACT1L["🔧 Фикс (эскалация на Sonnet)"]
+    REPORTL --> ACT4L["🔍 Детали"]
+    REPORTL --> ACT5L["OK"]
+
+    ACT1B --> PICKLIST["Отметь пункты галочками\n→ Фикс только их"]
+    PICKLIST --> FIXPROG
+
+    %% ==== ФИКС-ВЕТКА ====
+    ACT1 --> FIXPROG["📊 Фикс + критики ×2 (Opus)\n▓▓▓▓░░░░░░ 40%\nШаг 10/13: critic-A + critic-B"]
+    FIXPROG -.если проект = сам бот.-> SELFNOTE["⚠️ Self-check: после коммита\nбот сам себя не перезапустит\nсредствами Python —\nнужен внешний supervisor\n(exit-код + auto-restart loop,\nкак start.bat в sd-forge-bot)"]
+    SELFNOTE --> COMMIT
+    ACT1L --> FIXPROG
+
+    FIXPROG --> COMMIT["💾 Зафиксить и запушить?\ngit diff --stat: 4 файла, +120/-38\nТесты: 43/43\nДа / Нет / Показать полный diff"]
+    COMMIT -->|"Показать diff"| DIFFVIEW["📄 Полный diff\n(файл за файлом, пагинация)"]
+    DIFFVIEW --> COMMIT
+    COMMIT -->|"Да"| PUSHED["✅ Запушено через GitHub-модуль\nOK"]
+    COMMIT -->|"Нет"| REPORT
+
+    ACT2 --> MAIN
+    ACT3 --> MAIN
+    ACT4 --> REPORT
+    ACT5 --> MAIN
+    ACT4L --> REPORTL
+    ACT5L --> MAIN
+    PUSHED --> HISTLOG["запись в Историю ЧЕКов"]
+    HISTLOG --> MAIN
+
+    %% ==== НАСТРОЙКИ ПРОЕКТА ====
+    subgraph PROJSETTINGS["⚙️ НАСТРОЙКИ ПРОЕКТА"]
+        PSET["⚙️ Проект N\n📜 Реестр багов\n🔔 Авточек: вкл/выкл именно для него\n🕘 История именно по нему\n🗑️ Убрать из списка"]
+    end
+    PSET -->|"📜 Реестр багов"| REGTABS
+    PSET -->|"🕘 История"| BTN_HIST
+    PSET -->|"назад"| PROJLIST
+
+    %% ==== РЕЕСТР — вкладки ====
+    BTN_REG --> ASKPROJ{"Какой проект?"}
+    ASKPROJ --> REGTABS
+
+    subgraph REGVIEW2["📜 РЕЕСТР ПРОЕКТА — 3 вкладки"]
+        direction TB
+        REGTABS["🔴 Открыто (7) · 🟡 Отложено (2) · ⚫ Never (4)\nсортировка: по severity / по дате"]
+        REGOPEN["🔴 ОТКРЫТО — 7\n🟥 КРИТИЧНО ×2\n🟧 ВЫСОКИЙ ×3\n🟨 СРЕДНИЙ ×2\nстрока: эмодзи + file:symbol\n+ passes_run/life, пагинация по 5"]
+        REGLATER["🟡 ОТЛОЖЕНО — 2\nдата + причина\nесли код рядом менялся → «напомнить?»"]
+        REGNEVER["⚫ NEVER — 4\nпричина «не баг/фича/не трогать»\n[Вернуть в открытые]"]
+        REGTABS -->|"Открыто"| REGOPEN
+        REGTABS -->|"Отложено"| REGLATER
+        REGTABS -->|"Never"| REGNEVER
+    end
+    REGOPEN --> REGITEM["Карточка находки:\nfile::symbol::pattern\nпопытки, история раундов\n🔗 Открыть файл в GitHub\n[Фикс][Отложить][Never][Назад]"]
+    REGITEM --> REGTABS
+    REGOPEN --> MAIN
+    REGLATER --> MAIN
+    REGNEVER --> MAIN
+
+    %% ==== ИСТОРИЯ ====
+    BTN_HIST --> HISTVIEW["🕘 Прошлые ЧЕКи\nдата · проект · Full/Lite\nрезультат: N решено / N эскалировано\n🔗 ссылка на коммит"]
+    HISTVIEW --> HISTITEM["Детали прогона:\nполный отчёт того запуска"]
+    HISTITEM --> HISTVIEW
+    HISTVIEW --> MAIN
+
+    %% ==== НАСТРОЙКИ ====
+    BTN_SET --> SETLIST["🔔 Авточек глобально: выкл (по умолч.)\n   правило: <60% квоты→Full, <1ч и <90%→Lite\n📁 Проекты для авточека\n🧵 Модель для Lite (локалка: какая)\n📍 Куда слать уведомления\n🐙 Статус GitHub-токена"]
+    SETLIST --> MAIN
+
+    %% ==== GITHUB ====
+    BTN_GH --> GHLIST["📋 Список репо + статус\n(private/public, когда обновлён)"]
+    GHLIST --> GHBATCH["⚡ Закрыть все публичные\n⚡ Список приватных"]
+    GHLIST --> GHREPO{"Выбрать репо"}
+    GHREPO --> GHACT["🔒 Закрыть  🌐 Открыть\n📝 Открытые issues\n(удаление репо НЕДОСТУПНО через бота —\nтолько руками в самом GitHub)"]
+    GHACT --> GHDONE["✅ Готово\nOK"]
+    GHLIST --> GHTOKEN["🔑 Токен: активен, истекает через 4 дня\n[Обновить токен]"]
+    GHTOKEN --> MAIN
+    GHBATCH --> MAIN
+    GHDONE --> MAIN
+
+    %% ==== АДМИНКА ====
+    BTN_ADMIN --> ADMINLIST["👥 Пользователи / лимиты\n📊 Статистика: запусков за неделю,\n   оценка расхода по моделям\n📢 Рассылка\n🪵 Логи бота (STATE_LOG-стиль)\n🧪 Тестовый прогон (dry-run)"]
+    ADMINLIST --> MAIN
+
+    classDef full fill:#5f1e1e,stroke:#a53b3b,color:#fff
+    classDef lite fill:#2d5016,stroke:#4a7c2a,color:#fff
+    classDef prog fill:#1e3a5f,stroke:#3b6ea5,color:#fff
+    classDef report fill:#5f4b1e,stroke:#a5843b,color:#fff
+    classDef gh fill:#3a2d5f,stroke:#6a4ba5,color:#fff
+    classDef warn fill:#3a1e1e,stroke:#a53b3b,color:#ff9
+    classDef reportcrit fill:#5f1e1e,stroke:#a53b3b,color:#fff
+    classDef reportlater fill:#5f4b1e,stroke:#a5843b,color:#fff
+    classDef reportnever fill:#3a3a3a,stroke:#666,color:#fff
+
+    class BTN_FULL,CONFIRM1,PROG full
+    class BTN_LITE,CONFIRM2,PROGL lite
+    class REPORT,REPORTL,COMMIT report
+    class BTN_GH,GHACT gh
+    class REGOPEN reportcrit
+    class REGLATER reportlater
+    class REGNEVER reportnever
+    class INTERRUPTED warn
+    class SELFNOTE warn
+    class SELFNOTE warn

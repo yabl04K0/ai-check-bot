@@ -1,2 +1,45 @@
 # ai-check-bot
-Telegram bot for orchestrating AI checks/fixes (CHEK protocol) across multiple projects via Claude + local LLM delegation
+
+Telegram-бот-оркестратор для протокола ЧЕК (CHEK) — управляет мультиагентными
+проверками и фиксами по нескольким проектам через Claude (Opus/Sonnet/Haiku)
+и локальную LLM для лёгких задач.
+
+## Статус
+
+Ранняя стадия, готовится к open source. Схемы архитектуры готовы, код — в разработке.
+
+## Режимы
+
+- **ЧЕК** — полный 13-шаговый протокол: Opus-оркестратор + fleet-planner,
+  Sonnet-чекеры/фиксер, Opus-критики x2 (см. `docs/architecture`).
+- **Lite ЧЕК** — Sonnet-оркестратор + локальная LLM вместо тяжёлого флота,
+  для быстрых прогонов без траты дорогой квоты.
+
+## Архитектура
+
+- [Карта меню бота](docs/architecture/ui-map.mermaid)
+- [Бэкенд-архитектура](docs/architecture/backend-architecture.mermaid)
+
+Рендерятся напрямую на GitHub (Mermaid поддерживается в превью .mermaid/.md).
+
+## Ключевые принципы
+
+- Источник истины по багам — `chek_open.md` / `chek_never.md` / `chek_later.md`
+  в каждом репо, бот только кэширует для быстрого UI.
+- Коммит всегда подтверждает человек — агент никогда не коммитит сам.
+- Автопроверка по квоте — выключена по умолчанию (см. `.env.example`).
+- GitHub-интеграция может открывать/закрывать видимость репо, **но не может
+  удалять репозитории или историю коммитов** — это исключено принципиально.
+
+## Установка
+
+\`\`\`bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env  # заполнить токены
+\`\`\`
+
+## Лицензия
+
+MIT
