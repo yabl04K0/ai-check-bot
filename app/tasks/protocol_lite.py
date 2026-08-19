@@ -60,7 +60,9 @@ class LiteStep3Fixer(Step):
             "`--- a/путь` / `+++ b/путь`, ханки `@@`), без markdown-разметки "
             "и пояснений — на подтверждении в боте это идёт прямо в `git apply`."
         )
-        result = ctx.provider.run_prompt(prompt, RunOptions(system="Ты — fixer в Lite-режиме, пишешь unified diff."))
+        result = ctx.provider.run_prompt(
+            prompt, RunOptions(system="Ты — fixer в Lite-режиме, пишешь unified diff.")
+        )
         ctx.state["fix_proposal"] = result.text
         ctx.state["patch"] = result.text
 

@@ -256,7 +256,9 @@ async def report_fix_select_prompt(update: Update, context: ContextTypes.DEFAULT
     )
 
 
-async def _enqueue_fix(update: Update, context: ContextTypes.DEFAULT_TYPE, source_job_id: int, comment: str) -> None:
+async def _enqueue_fix(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, source_job_id: int, comment: str
+) -> None:
     with get_session() as session:
         source = session.get(Job, source_job_id)
         if source is None:
@@ -276,7 +278,9 @@ async def _enqueue_fix(update: Update, context: ContextTypes.DEFAULT_TYPE, sourc
         position = queue.position_in_queue(job_id)
 
     if busy and position > 1:
-        await context.bot.send_message(update.effective_chat.id, f"⏳ Фикс поставлен в очередь, позиция {position}.")
+        await context.bot.send_message(
+            update.effective_chat.id, f"⏳ Фикс поставлен в очередь, позиция {position}."
+        )
         return
     await context.bot.send_message(update.effective_chat.id, f"✅ Фикс #{job_id} запускается…")
     asyncio.create_task(start_job(context.application, job_id))
@@ -289,7 +293,9 @@ async def report_later_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data["awaiting"] = "later_reason"
     context.user_data["registry_job_id"] = job_id
     await context.bot.send_message(
-        update.effective_chat.id, "Отправь: `file::symbol; причина` — отложить эту находку.", parse_mode="Markdown"
+        update.effective_chat.id,
+        "Отправь: `file::symbol; причина` — отложить эту находку.",
+        parse_mode="Markdown",
     )
 
 
@@ -393,12 +399,15 @@ def _apply_and_commit_blocking(job_id: int, github_token: str | None) -> str:
         if not ok:
             return f"❌ Не удалось применить патч в {target.name}:\n{apply_detail[:1500]}"
 
-        commit_message = f"{TASK_TYPE_LABELS.get(task_type, task_type.value)}: {(comment or 'изменения от ai-check-bot')[:72]}"
+        short_comment = (comment or "изменения от ai-check-bot")[:72]
+        commit_message = f"{TASK_TYPE_LABELS.get(task_type, task_type.value)}: {short_comment}"
         ok, commit_detail = commit_all(path, commit_message)
         if not ok:
             return f"⚠️ Патч применён в {target.name}, но commit не удался:\n{commit_detail[:1500]}"
 
-        log_action(str(job.created_by_tg_id or "system"), "commit_applied", f"job #{job_id} project={target.name}")
+        log_action(
+            str(job.created_by_tg_id or "system"), "commit_applied", f"job #{job_id} project={target.name}"
+        )
 
         sha = current_commit_sha(path)
         commit_url = f"https://github.com/{target.repo_full_name}/commit/{sha}" if sha else None
@@ -464,7 +473,9 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(cancel_job, pattern=r"^job:cancel:\d+$"))
     application.add_handler(CallbackQueryHandler(report_details, pattern=r"^report:details:\d+$"))
     application.add_handler(CallbackQueryHandler(report_fix_all, pattern=r"^report:fix_all:\d+$"))
-    application.add_handler(CallbackQueryHandler(report_fix_select_prompt, pattern=r"^report:fix_select:\d+$"))
+    application.add_handler(
+        CallbackQueryHandler(report_fix_select_prompt, pattern=r"^report:fix_select:\d+$")
+    )
     application.add_handler(CallbackQueryHandler(report_later_prompt, pattern=r"^report:later:\d+$"))
     application.add_handler(CallbackQueryHandler(report_never_prompt, pattern=r"^report:never:\d+$"))
     application.add_handler(CallbackQueryHandler(commit_ask, pattern=r"^commit:ask:\d+$"))

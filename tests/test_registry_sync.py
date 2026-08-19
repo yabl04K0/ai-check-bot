@@ -47,7 +47,8 @@ def test_sync_updates_existing_row_on_status_change(db, tmp_path):
         project_id = project.id
 
     # находку перенесли в later прямо в файле (как это делает move_finding)
-    write_registry(tmp_path, Registry(later=[RegistryFinding(file_symbol="a.py::f", description="x", reason="потом")]))
+    later_finding = RegistryFinding(file_symbol="a.py::f", description="x", reason="потом")
+    write_registry(tmp_path, Registry(later=[later_finding]))
 
     with get_session() as session:
         project = session.get(Project, project_id)
@@ -64,7 +65,12 @@ def test_sync_updates_existing_row_on_status_change(db, tmp_path):
 def test_sync_removes_stale_rows_no_longer_in_md(db, tmp_path):
     write_registry(
         tmp_path,
-        Registry(open=[RegistryFinding(file_symbol="a.py::f", description="x"), RegistryFinding(file_symbol="b.py::g", description="y")]),
+        Registry(
+            open=[
+                RegistryFinding(file_symbol="a.py::f", description="x"),
+                RegistryFinding(file_symbol="b.py::g", description="y"),
+            ]
+        ),
     )
     with get_session() as session:
         project = _make_project(session, tmp_path)

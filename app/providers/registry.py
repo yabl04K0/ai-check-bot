@@ -35,7 +35,7 @@ class ProviderRegistry:
         self._providers = providers
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> "ProviderRegistry":
+    def from_settings(cls, settings: Settings) -> ProviderRegistry:
         return cls(build_providers(settings))
 
     def get(self, name: ProviderName) -> AIProvider:

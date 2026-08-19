@@ -45,10 +45,11 @@ class QuotaTracker:
 
         since = datetime.now(timezone.utc) - WEEK
         with get_session() as session:
+            tokens_sum = func.coalesce(
+                func.sum(QuotaUsageLog.input_tokens + QuotaUsageLog.output_tokens), 0
+            )
             total = session.scalar(
-                select(func.coalesce(func.sum(QuotaUsageLog.input_tokens + QuotaUsageLog.output_tokens), 0)).where(
-                    QuotaUsageLog.provider == self.provider, QuotaUsageLog.ts >= since
-                )
+                select(tokens_sum).where(QuotaUsageLog.provider == self.provider, QuotaUsageLog.ts >= since)
             )
             oldest = session.scalar(
                 select(func.min(QuotaUsageLog.ts)).where(

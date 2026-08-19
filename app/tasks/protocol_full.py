@@ -199,7 +199,9 @@ class Step10Critics(Step):
             return result.text
 
         with ThreadPoolExecutor(max_workers=2) as pool:
-            critic_a, critic_b = pool.map(critic, ["корректность и регрессии", "безопасность и производительность"])
+            critic_a, critic_b = pool.map(
+                critic, ["корректность и регрессии", "безопасность и производительность"]
+            )
         ctx.state["critic_a"] = critic_a
         ctx.state["critic_b"] = critic_b
 
@@ -226,7 +228,9 @@ class Step11ConvergenceLoop(Step):
                 f"Critic-B: {ctx.state.get('critic_b', '')}\n\n"
                 f"Текущий фикс:\n{ctx.state.get('fix_proposal', '')}"
             )
-            result = ctx.provider.run_prompt(prompt, RunOptions(system="Ты — fixer, дорабатываешь по замечаниям."))
+            result = ctx.provider.run_prompt(
+                prompt, RunOptions(system="Ты — fixer, дорабатываешь по замечаниям.")
+            )
             ctx.state["fix_proposal"] = result.text
 
             def critic(focus: str, fix: str = ctx.state["fix_proposal"]) -> str:

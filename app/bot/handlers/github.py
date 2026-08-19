@@ -85,9 +85,14 @@ async def toggle_visibility(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.answer(str(exc), show_alert=True)
         return
     repos[index] = updated
-    log_action(str(update.effective_user.id), "github_set_visibility", f"{updated.full_name} private={updated.private}")
+    log_action(
+        str(update.effective_user.id),
+        "github_set_visibility",
+        f"{updated.full_name} private={updated.private}",
+    )
     await query.answer("Ок")
-    text = f"{updated.full_name}\n{'приватный' if updated.private else 'публичный'} · issues: {updated.open_issues}"
+    visibility = "приватный" if updated.private else "публичный"
+    text = f"{updated.full_name}\n{visibility} · issues: {updated.open_issues}"
     await query.edit_message_text(text, reply_markup=_repo_menu(index, updated.private))
 
 

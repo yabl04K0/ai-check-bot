@@ -18,7 +18,9 @@ from app.providers.base import LoginResult, ProviderError
 LOGIN_TIMEOUT_SECONDS = 90
 
 
-def run_cli_login(cli_path: str | None, *, missing_path_hint: str, timeout: int = LOGIN_TIMEOUT_SECONDS) -> LoginResult:
+def run_cli_login(
+    cli_path: str | None, *, missing_path_hint: str, timeout: int = LOGIN_TIMEOUT_SECONDS
+) -> LoginResult:
     if not cli_path:
         raise ProviderError(missing_path_hint)
 
@@ -46,4 +48,5 @@ def run_cli_login(cli_path: str | None, *, missing_path_hint: str, timeout: int 
     output = (result.stdout or "") + (result.stderr or "")
     if result.returncode == 0:
         return LoginResult(success=True, message=output.strip() or "Логин выполнен.")
-    return LoginResult(success=False, message=output.strip() or f"login завершился с кодом {result.returncode}")
+    fallback = f"login завершился с кодом {result.returncode}"
+    return LoginResult(success=False, message=output.strip() or fallback)

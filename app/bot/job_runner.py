@@ -15,10 +15,10 @@ import logging
 from telegram.error import TelegramError
 from telegram.ext import Application
 
-from app.db.models import HistoryEntry, Job, JobStatus, ProviderMode
-from app.db.session import get_session
 from app.bot.formatting import render_error, render_interrupted, render_progress, render_report_header
 from app.bot.keyboards import progress_menu, report_menu
+from app.db.models import HistoryEntry, Job, JobStatus, ProviderMode
+from app.db.session import get_session
 from app.logging_setup import log_action
 from app.providers.registry import ProviderRegistry
 from app.providers.router import NoProviderAvailableError, pick_provider
@@ -169,7 +169,9 @@ async def _progress_loop(application, job_id: int, chat_id: int | None, message)
                 pass
 
 
-async def _deliver_outcome(application, job_id: int, chat_id: int, status: JobStatus, progress_message) -> None:
+async def _deliver_outcome(
+    application, job_id: int, chat_id: int, status: JobStatus, progress_message
+) -> None:
     with get_session() as session:
         job = session.get(Job, job_id)
         is_check = job.task_type.value.startswith("check")

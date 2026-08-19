@@ -106,8 +106,12 @@ class Project(Base):
     autopush_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
-    findings: Mapped[list["Finding"]] = relationship(back_populates="project", cascade="all, delete-orphan")
-    history_entries: Mapped[list["HistoryEntry"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    findings: Mapped[list[Finding]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    history_entries: Mapped[list[HistoryEntry]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Project {self.name} ({self.repo_full_name})>"
@@ -133,7 +137,8 @@ class Job(Base):
     provider_mode: Mapped[ProviderMode] = mapped_column(String(16), default=ProviderMode.MANUAL)
     status: Mapped[JobStatus] = mapped_column(String(16), default=JobStatus.QUEUED)
 
-    scope: Mapped[str | None] = mapped_column(String(64), nullable=True)  # "all" / "all_ignore_registry" / "path:..."
+    # "all" / "all_ignore_registry" / "path:..."
+    scope: Mapped[str | None] = mapped_column(String(64), nullable=True)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     progress_step: Mapped[int] = mapped_column(Integer, default=0)
@@ -154,7 +159,7 @@ class Job(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    projects: Mapped[list["Project"]] = relationship(secondary="job_projects")
+    projects: Mapped[list[Project]] = relationship(secondary="job_projects")
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Job #{self.id} {self.task_type} {self.status}>"
@@ -177,7 +182,7 @@ class Finding(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
-    project: Mapped["Project"] = relationship(back_populates="findings")
+    project: Mapped[Project] = relationship(back_populates="findings")
 
 
 class HistoryEntry(Base):
@@ -193,7 +198,7 @@ class HistoryEntry(Base):
     commit_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
-    project: Mapped["Project"] = relationship(back_populates="history_entries")
+    project: Mapped[Project] = relationship(back_populates="history_entries")
 
 
 class ProviderAccount(Base):
@@ -204,7 +209,9 @@ class ProviderAccount(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     provider: Mapped[ProviderName] = mapped_column(String(32))
-    status: Mapped[ProviderAccountStatus] = mapped_column(String(16), default=ProviderAccountStatus.NOT_CONNECTED)
+    status: Mapped[ProviderAccountStatus] = mapped_column(
+        String(16), default=ProviderAccountStatus.NOT_CONNECTED
+    )
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

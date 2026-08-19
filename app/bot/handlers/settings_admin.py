@@ -37,7 +37,8 @@ def _settings_view(context: ContextTypes.DEFAULT_TYPE) -> tuple[str, InlineKeybo
     login_rows = []
     for name, provider in registry.all().items():
         status = provider.auth_status()
-        lines.append(f"  {name.value}: {status.status.value}" + (f" ({status.detail})" if status.detail else ""))
+        detail_suffix = f" ({status.detail})" if status.detail else ""
+        lines.append(f"  {name.value}: {status.status.value}{detail_suffix}")
         if provider.supports_login() and status.status != ProviderAccountStatus.CONNECTED:
             login_rows.append(
                 [InlineKeyboardButton(f"🔑 Войти: {name.value}", callback_data=f"set:login:{name.value}")]
@@ -76,7 +77,9 @@ async def login_provider(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except ProviderError as exc:
         text = f"❌ {exc}"
 
-    log_action(str(update.effective_user.id), "provider_login_attempt", f"{provider_name.value}: {text[:200]}")
+    log_action(
+        str(update.effective_user.id), "provider_login_attempt", f"{provider_name.value}: {text[:200]}"
+    )
     await context.bot.send_message(update.effective_chat.id, text[:4000])
     await query.edit_message_text(*_settings_view(context))
 

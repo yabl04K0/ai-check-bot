@@ -104,11 +104,16 @@ def commit_confirm_menu(job_id: int) -> InlineKeyboardMarkup:
 
 
 def registry_tabs(project_id: int) -> InlineKeyboardMarkup:
+    def tab(label: str, status: FindingStatus) -> InlineKeyboardButton:
+        return InlineKeyboardButton(label, callback_data=f"reg:tab:{project_id}:{status.value}")
+
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("🔴 Открыто", callback_data=f"reg:tab:{project_id}:{FindingStatus.OPEN.value}"),
-             InlineKeyboardButton("🟡 Отложено", callback_data=f"reg:tab:{project_id}:{FindingStatus.LATER.value}"),
-             InlineKeyboardButton("⚫ Never", callback_data=f"reg:tab:{project_id}:{FindingStatus.NEVER.value}")],
+            [
+                tab("🔴 Открыто", FindingStatus.OPEN),
+                tab("🟡 Отложено", FindingStatus.LATER),
+                tab("⚫ Never", FindingStatus.NEVER),
+            ],
             [back_button("menu:registry")],
         ]
     )

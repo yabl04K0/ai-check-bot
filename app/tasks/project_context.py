@@ -38,7 +38,9 @@ def gather_tests(project: Project, *, timeout: int = 300) -> str:
     path = local_path(project)
     if path is None:
         return UNAVAILABLE
-    if not (path / "pytest.ini").exists() and not (path / "pyproject.toml").exists() and not any(path.glob("test_*.py")) and not any(path.glob("tests/**/*.py")):
+    has_pytest_config = (path / "pytest.ini").exists() or (path / "pyproject.toml").exists()
+    has_test_files = any(path.glob("test_*.py")) or any(path.glob("tests/**/*.py"))
+    if not has_pytest_config and not has_test_files:
         return "(тестов не найдено — pytest не запускался)"
     try:
         result = subprocess.run(

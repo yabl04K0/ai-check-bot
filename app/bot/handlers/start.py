@@ -5,9 +5,9 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+from app.bot.keyboards import main_menu
 from app.db.models import User
 from app.db.session import get_session
-from app.bot.keyboards import main_menu
 
 ONBOARDING_TEXT = (
     "👋 Онбординг\n\n"

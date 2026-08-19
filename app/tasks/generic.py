@@ -54,7 +54,9 @@ class GenericStep2Implement(Step):
             "`git apply` + `git commit`, поэтому невалидный diff здесь = "
             "неприменимый патч в боте."
         )
-        result = ctx.provider.run_prompt(prompt, RunOptions(system="Ты — разработчик, пишешь unified diff патч."))
+        result = ctx.provider.run_prompt(
+            prompt, RunOptions(system="Ты — разработчик, пишешь unified diff патч.")
+        )
         ctx.state["patch"] = result.text
 
 

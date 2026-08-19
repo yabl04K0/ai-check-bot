@@ -55,7 +55,11 @@ def test_pipeline_quota_exceeded_pauses_job(db):
         queue = JobQueue(session)
         ctx = StepContext(job=job, projects=list(job.projects), provider=None, session=session)
         pipeline = Pipeline(
-            [RecordingStep("a", calls), RecordingStep("b", calls, raise_quota=True), RecordingStep("c", calls)]
+            [
+                RecordingStep("a", calls),
+                RecordingStep("b", calls, raise_quota=True),
+                RecordingStep("c", calls),
+            ]
         )
 
         with pytest.raises(PipelineInterrupted):

@@ -31,7 +31,9 @@ class CursorProvider(AIProvider):
 
     def auth_status(self) -> AuthStatus:
         if not self._cli_path:
-            return AuthStatus(status=ProviderAccountStatus.NOT_CONNECTED, detail="CURSOR_AGENT_CLI_PATH не задан")
+            return AuthStatus(
+                status=ProviderAccountStatus.NOT_CONNECTED, detail="CURSOR_AGENT_CLI_PATH не задан"
+            )
         try:
             result = subprocess.run(
                 [self._cli_path, "status"], capture_output=True, text=True, timeout=10
@@ -40,7 +42,9 @@ class CursorProvider(AIProvider):
             return AuthStatus(status=ProviderAccountStatus.NOT_CONNECTED, detail=str(exc))
         if result.returncode == 0:
             return AuthStatus(status=ProviderAccountStatus.CONNECTED)
-        return AuthStatus(status=ProviderAccountStatus.NOT_CONNECTED, detail=result.stderr.strip() or "не залогинен")
+        return AuthStatus(
+            status=ProviderAccountStatus.NOT_CONNECTED, detail=result.stderr.strip() or "не залогинен"
+        )
 
     def run_prompt(self, prompt: str, options: RunOptions | None = None) -> ProviderResult:
         if not self._cli_path:
@@ -60,7 +64,9 @@ class CursorProvider(AIProvider):
             raise ProviderError(f"cursor-agent CLI error: {exc}") from exc
 
         if result.returncode != 0:
-            raise ProviderError(f"cursor-agent завершился с кодом {result.returncode}: {result.stderr.strip()}")
+            raise ProviderError(
+                f"cursor-agent завершился с кодом {result.returncode}: {result.stderr.strip()}"
+            )
 
         return ProviderResult(text=result.stdout.strip(), model="cursor-agent", raw=result)
 
