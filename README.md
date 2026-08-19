@@ -209,6 +209,11 @@ python -m app.main    # запуск бота (long polling)
 
 Для разработки/тестов: `pip install -r requirements-dev.txt && pytest`.
 
+Для self-check сценария (бот может закоммитить патч в свой же код —
+процессу Python не перезапустить себя штатно) — запускать через
+`scripts/supervise.sh` вместо голого `python -m app.main`: это
+auto-restart loop, поднимающий бота заново при падении.
+
 ## Лицензия
 
 MIT

@@ -8,3 +8,5 @@ venv/
 .DS_Store
 logs/
 *.log
+.pytest_cache/
+data/
