@@ -144,6 +144,13 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     local_path = parts[2] if len(parts) > 2 else None
 
     with get_session() as session:
+        existing = session.scalar(select(Project).where(Project.repo_full_name == repo_full_name))
+        if existing is not None:
+            await update.message.reply_text(
+                f"⚠️ Проект с repo {repo_full_name} уже есть в списке: {existing.name}."
+            )
+            context.user_data["awaiting"] = None
+            return
         session.add(Project(name=name, repo_full_name=repo_full_name, local_path=local_path))
         session.commit()
 
