@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import base64
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,11 +90,24 @@ class GitHubClient:
             raise GitHubError(f"Не удалось получить issues {repo_full_name}: {exc}") from exc
 
     def push_commit(self, local_path: Path, branch: str = "main") -> str:
-        """Пуш после Step 13 (human confirm). Требует, чтобы local_path уже
-        был git-репозиторием с origin, настроенным на аутентификацию токеном
-        (credential helper / git remote с токеном в URL настраивает
-        вызывающий код — сюда токен намеренно не передаётся, чтобы не
-        светить его в аргументах процесса/логах)."""
+        """Пуш после Step 13 (human confirm).
+
+        Аутентификация — GITHUB_TOKEN, переданный через переменные
+        окружения (GIT_CONFIG_KEY_0/VALUE_0, официальный механизм git
+        начиная с 2.31), НЕ через argv: `ps aux` виден другим локальным
+        пользователям хоста, окружение процесса — только тому же
+        пользователю/root, тот же уровень доверия, что у остальных
+        секретов в этом проекте (.env). Работает только для HTTPS-remote
+        (`https://github.com/...`) — fine-grained PAT так и задуман,
+        для SSH-remote (`git@github.com:...`) эта аутентификация не
+        применяется, git использует свой обычный SSH-механизм."""
+        basic_auth = base64.b64encode(f"x-access-token:{self._token}".encode()).decode()
+        env = {
+            **os.environ,
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.extraheader",
+            "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic_auth}",
+        }
         try:
             result = subprocess.run(
                 ["git", "push", "origin", branch],
@@ -100,6 +115,7 @@ class GitHubClient:
                 capture_output=True,
                 text=True,
                 timeout=120,
+                env=env,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise GitHubError(f"git push не выполнился: {exc}") from exc
