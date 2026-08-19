@@ -13,6 +13,7 @@ from app.providers.base import (
     AIProvider,
     AuthStatus,
     ProviderError,
+    ProviderQuotaExceededError,
     ProviderResult,
     RunOptions,
 )
@@ -53,6 +54,15 @@ class LocalLLMProvider(AIProvider):
                 timeout=180,
             )
             response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429:
+                # Локалка без квоты в привычном смысле, но "слишком много
+                # запросов, попробуй позже" — тот же HANDOVER-паттерн, что
+                # и у платных провайдеров: осмысленнее паузы, чем падение.
+                raise ProviderQuotaExceededError(
+                    f"Локальная LLM перегружена (429, {self._base_url}): {exc}"
+                ) from exc
+            raise ProviderError(f"Локальная LLM вернула ошибку ({self._base_url}): {exc}") from exc
         except httpx.HTTPError as exc:
             raise ProviderError(f"Локальная LLM недоступна ({self._base_url}): {exc}") from exc
 

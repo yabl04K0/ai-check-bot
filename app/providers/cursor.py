@@ -17,10 +17,22 @@ from app.providers.base import (
     LoginResult,
     ProviderError,
     ProviderNotAuthenticatedError,
+    ProviderQuotaExceededError,
     ProviderResult,
     RunOptions,
 )
 from app.providers.cli_login import run_cli_login
+
+# cursor-agent — CLI-обёртка, у неё нет структурированного кода ошибки типа
+# HTTP 429, только текст в stderr/stdout. Эвристика, а не гарантия: ищем
+# явные признаки лимита в тексте ошибки, чтобы хотя бы для типичных формулировок
+# сработал HANDOVER-паттерн вместо голого падения с ProviderError.
+QUOTA_ERROR_MARKERS = ("rate limit", "rate-limit", "429", "quota", "too many requests")
+
+
+def _looks_like_quota_error(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in QUOTA_ERROR_MARKERS)
 
 
 class CursorProvider(AIProvider):
@@ -64,9 +76,10 @@ class CursorProvider(AIProvider):
             raise ProviderError(f"cursor-agent CLI error: {exc}") from exc
 
         if result.returncode != 0:
-            raise ProviderError(
-                f"cursor-agent завершился с кодом {result.returncode}: {result.stderr.strip()}"
-            )
+            output = result.stderr.strip() or result.stdout.strip()
+            if _looks_like_quota_error(output):
+                raise ProviderQuotaExceededError(f"cursor-agent: похоже на лимит/квоту: {output}")
+            raise ProviderError(f"cursor-agent завершился с кодом {result.returncode}: {output}")
 
         return ProviderResult(text=result.stdout.strip(), model="cursor-agent", raw=result)
 

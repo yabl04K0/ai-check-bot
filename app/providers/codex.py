@@ -20,6 +20,7 @@ from app.providers.base import (
     LoginResult,
     ProviderError,
     ProviderNotAuthenticatedError,
+    ProviderQuotaExceededError,
     ProviderResult,
     RunOptions,
 )
@@ -91,8 +92,14 @@ class CodexProvider(AIProvider):
                 timeout=120,
             )
             response.raise_for_status()
-        except httpx.HTTPError as exc:
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429:
+                raise ProviderQuotaExceededError(
+                    f"Codex (OpenAI): превышен лимит запросов (429): {exc}"
+                ) from exc
             raise ProviderError(f"Codex (OpenAI) API error: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"Codex (OpenAI) network error: {exc}") from exc
 
         data = response.json()
         choice = data["choices"][0]["message"]["content"]

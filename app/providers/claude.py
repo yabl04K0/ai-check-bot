@@ -8,6 +8,7 @@ from app.providers.base import (
     AuthStatus,
     ProviderError,
     ProviderNotAuthenticatedError,
+    ProviderQuotaExceededError,
     ProviderResult,
     RunOptions,
 )
@@ -44,6 +45,8 @@ class ClaudeProvider(AIProvider):
     def run_prompt(self, prompt: str, options: RunOptions | None = None) -> ProviderResult:
         options = options or RunOptions()
         client = self._get_client()
+        import anthropic  # уже в sys.modules после _get_client(), это дёшево
+
         try:
             message = client.messages.create(
                 model=options.model or DEFAULT_MODEL,
@@ -52,7 +55,15 @@ class ClaudeProvider(AIProvider):
                 system=options.system or "",
                 messages=[{"role": "user", "content": prompt}],
             )
-        except Exception as exc:  # noqa: BLE001 — оборачиваем любую ошибку SDK
+        except anthropic.RateLimitError as exc:
+            # 429 — реальный сигнал квоты, отсюда движок пайплайна уходит в
+            # HANDOVER (см. app.tasks.pipeline), а не просто падает с ошибкой.
+            raise ProviderQuotaExceededError(f"Claude: превышен лимит запросов (429): {exc}") from exc
+        except anthropic.APIStatusError as exc:
+            if exc.status_code == 529:  # overloaded_error — ждать смысла столько же, сколько квоту
+                raise ProviderQuotaExceededError(f"Claude перегружен (529): {exc}") from exc
+            raise ProviderError(f"Claude API error: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001 — оборачиваем любую другую ошибку SDK
             raise ProviderError(f"Claude API error: {exc}") from exc
 
         text = "".join(block.text for block in message.content if getattr(block, "type", None) == "text")
