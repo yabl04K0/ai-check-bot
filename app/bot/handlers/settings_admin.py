@@ -188,17 +188,18 @@ async def show_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     with get_session() as session:
         users_count = session.scalar(select(func.count()).select_from(User))
-        jobs_this_week = session.scalar(
+        jobs_done_total = session.scalar(
             select(func.count()).select_from(Job).where(Job.status == JobStatus.DONE)
         )
         by_provider = session.execute(
             select(Job.provider, func.count()).where(Job.provider.is_not(None)).group_by(Job.provider)
         ).all()
 
+    by_provider_text = ", ".join(f"{p.value if p else '?'}={c}" for p, c in by_provider) or "—"
     lines = [
         f"👥 Пользователей: {users_count}",
-        f"📊 Задач выполнено всего: {jobs_this_week}",
-        "По провайдерам: " + ", ".join(f"{p.value if p else '?'}={c}" for p, c in by_provider) or "—",
+        f"📊 Задач выполнено всего: {jobs_done_total}",
+        "По провайдерам: " + by_provider_text,
     ]
     rows = [
         [InlineKeyboardButton("📢 Рассылка", callback_data="admin:broadcast")],
