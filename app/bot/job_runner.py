@@ -16,10 +16,11 @@ from telegram.error import TelegramError
 from telegram.ext import Application
 
 from app.bot.formatting import render_error, render_interrupted, render_progress, render_report_header
-from app.bot.keyboards import progress_menu, report_menu
+from app.bot.keyboards import approval_menu, progress_menu, report_menu
 from app.db.models import HistoryEntry, Job, JobStatus, ProviderMode
 from app.db.session import get_session
 from app.logging_setup import log_action
+from app.providers.ai_autonomy import job_needs_manual_approval
 from app.providers.registry import ProviderRegistry
 from app.providers.router import NoProviderAvailableError, pick_provider
 from app.providers.success_history import compute_success_scores
@@ -33,10 +34,36 @@ logger = logging.getLogger(__name__)
 
 CANCEL_REQUESTS: set[int] = set()  # job_id-ки, отменённые пользователем
 PAUSE_REQUESTS: set[int] = set()  # job_id-ки, поставленные на ⏸ Паузу
+# job_id-ки, для которых человек уже тапнул "✅ Разрешить" на экране
+# подтверждения запуска (см. _request_start_approval) — без этого набора
+# start_job() зациклился бы, повторно требуя подтверждение самого себя.
+APPROVED_JOB_IDS: set[int] = set()
+
+APPROVAL_REQUEST_TEXT = (
+    "🔑 Задача #{job_id} ({label}) готова к запуску.\n\n"
+    "Включён доступ ИИ к GITHUB_TOKEN (⚙️ Настройки → Автономность ИИ) — "
+    "прежде чем ИИ-провайдер начнёт работу, подтверди запуск вручную, как "
+    "в приложениях для вайб-кодинга. Роутер решает, какой провайдер "
+    "возьмёт задачу, только в момент старта — заранее не предсказать,\n"
+    "поэтому подтверждение спрашивается для любой задачи, пока доступ к "
+    "токену включён, не только для тех, что достанутся Cursor.\n\n"
+    "Отключить это подтверждение: ⚙️ Настройки → Автоодобрение команд."
+)
 
 
 async def start_job(application: Application, job_id: int) -> None:
-    """Точка входа: берёт job, гоняет пайплайн, шлёт отчёт, берёт следующую из очереди."""
+    """Точка входа: берёт job, гоняет пайплайн, шлёт отчёт, берёт следующую из очереди.
+
+    Единственный настоящий "старт выполнения" во всей кодовой базе (сюда
+    сходятся confirm() в check.py, _enqueue_fix, scheduler.autocheck._tick
+    и собственный хвост этой же функции, который берёт следующую задачу
+    из очереди) — поэтому именно тут, а не в каждом месте вызова, стоит
+    проверка на подтверждение запуска (см. app.providers.ai_autonomy)."""
+    if job_needs_manual_approval() and job_id not in APPROVED_JOB_IDS:
+        await _request_start_approval(application, job_id)
+        return
+    APPROVED_JOB_IDS.discard(job_id)
+
     with get_session() as session:
         job = session.get(Job, job_id)
         if job is None:
@@ -85,6 +112,37 @@ async def start_job(application: Application, job_id: int) -> None:
         next_job_id = next_job.id if next_job else None
     if next_job_id:
         asyncio.create_task(start_job(application, next_job_id))
+
+
+async def _request_start_approval(application: Application, job_id: int) -> None:
+    with get_session() as session:
+        job = session.get(Job, job_id)
+        if job is None:
+            logger.error("_request_start_approval: job #%s не найден", job_id)
+            return
+        chat_id = job.created_by_tg_id
+        task_type = job.task_type
+
+    if chat_id is None:
+        # Некому подтверждать (задача без chat_id, например будущий
+        # неинтерактивный источник) — не блокируем очередь навечно, но и
+        # не выполняем без подтверждения молча: явная ошибка вместо
+        # тихого зависания в QUEUED.
+        with get_session() as session:
+            job = session.get(Job, job_id)
+            JobQueue(session).mark_error(
+                job,
+                "Требуется подтверждение запуска (включён доступ ИИ к GITHUB_TOKEN), "
+                "но у задачи нет chat_id — некому его показать.",
+            )
+        return
+
+    label = TASK_TYPE_LABELS.get(task_type, task_type.value if hasattr(task_type, "value") else task_type)
+    text = APPROVAL_REQUEST_TEXT.format(job_id=job_id, label=label)
+    try:
+        await application.bot.send_message(chat_id, text, reply_markup=approval_menu(job_id))
+    except TelegramError:
+        logger.exception("Не удалось отправить запрос на подтверждение запуска по job #%s", job_id)
 
 
 def _run_pipeline_blocking(application: Application, job_id: int) -> dict:

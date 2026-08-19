@@ -105,6 +105,10 @@ class Settings:
     autocheck: AutocheckSettings
     db_path: Path
     project_root: Path = field(default_factory=lambda: Path(__file__).resolve().parent.parent)
+    # Директория с локальными чекаутами (см. app.tasks.local_repos) — для
+    # удобного выбора репо кнопкой при добавлении проекта. Не задано =
+    # добавление проекта работает как раньше, только ручной ввод.
+    local_repos_root: Path | None = None
 
     def require_bot_token(self) -> str:
         if not self.bot_token:
@@ -177,4 +181,5 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
             lite_hours_before_reset=_int(os.getenv("AUTOCHECK_LITE_HOURS_BEFORE_RESET"), 1),
         ),
         db_path=project_root / "data" / "bot.sqlite3",
+        local_repos_root=Path(os.getenv("LOCAL_REPOS_ROOT")) if os.getenv("LOCAL_REPOS_ROOT") else None,
     )

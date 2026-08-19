@@ -93,6 +93,19 @@ def commit_all(local_path: Path, message: str) -> tuple[bool, str]:
         return False, f"git commit не выполнился: {exc}"
 
 
+def has_uncommitted_changes(local_path: Path) -> bool:
+    """Использует мануальный пуш (см. app.bot.handlers.projects.manual_push) —
+    коммитить нужно, только если реально есть незакоммиченное, иначе
+    `git commit` просто упал бы с "nothing to commit"."""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=local_path, capture_output=True, text=True, timeout=15
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return bool(result.stdout.strip())
+
+
 def current_commit_sha(local_path: Path) -> str | None:
     try:
         result = subprocess.run(

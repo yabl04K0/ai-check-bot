@@ -13,10 +13,39 @@ from app.bot.keyboards import back_button
 from app.db.models import HistoryEntry, Job, JobStatus, Project, ProviderAccountStatus, ProviderName, User
 from app.db.session import get_session
 from app.logging_setup import log_action
+from app.providers.ai_autonomy import (
+    ai_command_auto_approve_enabled,
+    ai_github_token_access_enabled,
+    set_ai_command_auto_approve,
+    set_ai_github_token_access,
+)
 from app.providers.base import ProviderError
 from app.providers.registry import ProviderRegistry
 from app.scheduler.decision import decide_autocheck_action
 from app.tasks.types import TASK_TYPE_LABELS
+
+TOKEN_ACCESS_DISCLAIMER = (
+    "⚠️ Дисклеймер\n\n"
+    "Включая это, ты даёшь CLI-агенту (Cursor и т.п.) реальный GITHUB_TOKEN "
+    "в окружении процесса. Промпты бота просят его только вернуть diff "
+    "текстом (см. README), но agentic CLI в принципе может сделать больше "
+    "запрошенного — с токеном в окружении у него физически ЕСТЬ права на "
+    "git push / gh CLI команды от твоего имени, если он сам решит их "
+    "выполнить. Без этого тумблера у него токена нет вообще, что бы он ни "
+    "решил.\n\n"
+    "Точно включить?"
+)
+
+AUTO_APPROVE_DISCLAIMER = (
+    "⚠️ Дисклеймер\n\n"
+    "Пока включён доступ ИИ к GITHUB_TOKEN, каждый запуск задачи по "
+    "умолчанию требует отдельного тапа «✅ Разрешить» перед стартом — "
+    "как в приложениях для вайб-кодинга, которые спрашивают подтверждение "
+    "перед выполнением команд. Включая автоодобрение, ты отключаешь эту "
+    "проверку: задачи будут стартовать сразу, без дополнительного "
+    "подтверждения, пока доступ к токену включён.\n\n"
+    "Точно включить автоодобрение?"
+)
 
 
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -29,11 +58,17 @@ def _settings_view(context: ContextTypes.DEFAULT_TYPE) -> tuple[str, InlineKeybo
     settings = context.application.bot_data["settings"]
     autocheck_on = context.application.bot_data.get("autocheck_enabled_override", settings.autocheck.enabled)
     registry: ProviderRegistry = context.application.bot_data["provider_registry"]
+    token_access_on = ai_github_token_access_enabled()
+    auto_approve_on = ai_command_auto_approve_enabled()
 
     lines = [
         f"🔔 Авточек глобально: {'вкл' if autocheck_on else 'выкл'}",
         f"   правило: <{settings.autocheck.full_threshold_pct}% квоты→Full, "
         f"<{settings.autocheck.lite_hours_before_reset}ч и <{settings.autocheck.lite_threshold_pct}%→Lite",
+        "",
+        "🤖 Автономность ИИ:",
+        f"  ИИ видит GITHUB_TOKEN: {'вкл ⚠️' if token_access_on else 'выкл (безопасно)'}",
+        f"  Автоодобрение команд: {'вкл' if auto_approve_on else 'выкл — каждый запуск подтверждается'}",
         "",
         "🔌 Провайдеры ИИ:",
     ]
@@ -71,6 +106,14 @@ def _settings_view(context: ContextTypes.DEFAULT_TYPE) -> tuple[str, InlineKeybo
             f"🔔 Авточек: {'выключить' if autocheck_on else 'включить'}",
             callback_data="set:toggle_autocheck",
         )],
+        [InlineKeyboardButton(
+            f"🔑 ИИ видит GITHUB_TOKEN: {'выключить' if token_access_on else 'включить'}",
+            callback_data="set:toggle_token_access",
+        )],
+        [InlineKeyboardButton(
+            f"✅ Автоодобрение команд: {'выключить' if auto_approve_on else 'включить'}",
+            callback_data="set:toggle_auto_approve",
+        )],
         *provider_rows,
         [back_button()],
     ]
@@ -83,6 +126,63 @@ async def toggle_autocheck_global(update: Update, context: ContextTypes.DEFAULT_
     current = context.application.bot_data.get("autocheck_enabled_override", settings.autocheck.enabled)
     context.application.bot_data["autocheck_enabled_override"] = not current
     await query.answer("Ок")
+    await query.edit_message_text(*_settings_view(context))
+
+
+async def toggle_token_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Выключить — сразу и без вопросов (возврат к безопасному состоянию
+    никогда не требует дисклеймера). Включить — только через отдельный
+    экран с дисклеймером (см. confirm_token_access)."""
+    query = update.callback_query
+    if ai_github_token_access_enabled():
+        set_ai_github_token_access(False)
+        log_action(str(update.effective_user.id), "ai_github_token_access_disabled", "")
+        await query.answer("Выключено")
+        await query.edit_message_text(*_settings_view(context))
+        return
+
+    await query.answer()
+    markup = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Да, включить", callback_data="set:confirm_token_access")],
+            [back_button("menu:settings")],
+        ]
+    )
+    await query.edit_message_text(TOKEN_ACCESS_DISCLAIMER, reply_markup=markup)
+
+
+async def confirm_token_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    set_ai_github_token_access(True)
+    log_action(str(update.effective_user.id), "ai_github_token_access_enabled", "")
+    await query.answer("Включено")
+    await query.edit_message_text(*_settings_view(context))
+
+
+async def toggle_auto_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if ai_command_auto_approve_enabled():
+        set_ai_command_auto_approve(False)
+        log_action(str(update.effective_user.id), "ai_auto_approve_disabled", "")
+        await query.answer("Выключено")
+        await query.edit_message_text(*_settings_view(context))
+        return
+
+    await query.answer()
+    markup = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Да, включить", callback_data="set:confirm_auto_approve")],
+            [back_button("menu:settings")],
+        ]
+    )
+    await query.edit_message_text(AUTO_APPROVE_DISCLAIMER, reply_markup=markup)
+
+
+async def confirm_auto_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    set_ai_command_auto_approve(True)
+    log_action(str(update.effective_user.id), "ai_auto_approve_enabled", "")
+    await query.answer("Включено")
     await query.edit_message_text(*_settings_view(context))
 
 
@@ -283,6 +383,18 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(show_settings, pattern=r"^menu:settings$"))
     application.add_handler(CallbackQueryHandler(toggle_autocheck_global, pattern=r"^set:toggle_autocheck$"))
+    application.add_handler(
+        CallbackQueryHandler(toggle_token_access, pattern=r"^set:toggle_token_access$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(confirm_token_access, pattern=r"^set:confirm_token_access$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(toggle_auto_approve, pattern=r"^set:toggle_auto_approve$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(confirm_auto_approve, pattern=r"^set:confirm_auto_approve$")
+    )
     application.add_handler(CallbackQueryHandler(login_provider, pattern=r"^set:login:\w+$"))
     application.add_handler(CallbackQueryHandler(refresh_provider, pattern=r"^set:refresh:\w+$"))
     application.add_handler(CallbackQueryHandler(disable_provider, pattern=r"^set:disable:\w+$"))

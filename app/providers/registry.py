@@ -33,7 +33,7 @@ def build_providers(settings: Settings) -> dict[ProviderName, AIProvider]:
             QuotaTracker(ProviderName.CODEX, p.openai_weekly_token_budget),
             cli_path=p.codex_cli_path,
         ),
-        ProviderName.CURSOR: CursorProvider(p.cursor_agent_cli_path),
+        ProviderName.CURSOR: CursorProvider(p.cursor_agent_cli_path, github_token=settings.github_token),
         ProviderName.LOCAL_LLM: LocalLLMProvider(p.local_llm_base_url, p.local_llm_model),
         ProviderName.GEMINI: GeminiProvider(
             p.gemini_api_key,

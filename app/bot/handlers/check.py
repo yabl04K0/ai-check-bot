@@ -217,6 +217,33 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     asyncio.create_task(start_job(context.application, job_id))
 
 
+async def approve_job_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Тап "✅ Разрешить" на экране подтверждения запуска (см.
+    app.bot.job_runner._request_start_approval, показывается только пока
+    включён доступ ИИ к GITHUB_TOKEN и выключено автоодобрение)."""
+    from app.bot.job_runner import APPROVED_JOB_IDS
+
+    query = update.callback_query
+    job_id = int(query.data.split(":")[-1])
+    APPROVED_JOB_IDS.add(job_id)
+    log_action(str(update.effective_user.id), "job_start_approved", f"#{job_id}")
+    await query.answer("Разрешено")
+    await query.edit_message_text(f"✅ Задача #{job_id} запускается…")
+    asyncio.create_task(start_job(context.application, job_id))
+
+
+async def reject_job_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    job_id = int(query.data.split(":")[-1])
+    with get_session() as session:
+        job = session.get(Job, job_id)
+        if job is not None and job.status == JobStatus.QUEUED:
+            JobQueue(session).mark_cancelled(job)
+    log_action(str(update.effective_user.id), "job_start_rejected", f"#{job_id}")
+    await query.answer("Отклонено")
+    await query.edit_message_text(f"❌ Задача #{job_id} отклонена, запуск отменён.")
+
+
 async def cancel_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     job_id = int(query.data.split(":")[-1])
@@ -492,6 +519,8 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(pick_scope, pattern=r"^chk:scope:\w+$"))
     application.add_handler(CallbackQueryHandler(skip_comment, pattern=r"^chk:comment:skip$"))
     application.add_handler(CallbackQueryHandler(confirm, pattern=r"^chk:confirm$"))
+    application.add_handler(CallbackQueryHandler(approve_job_start, pattern=r"^job:approve:\d+$"))
+    application.add_handler(CallbackQueryHandler(reject_job_start, pattern=r"^job:reject:\d+$"))
     application.add_handler(CallbackQueryHandler(cancel_job, pattern=r"^job:cancel:\d+$"))
     application.add_handler(CallbackQueryHandler(pause_job, pattern=r"^job:pause:\d+$"))
     application.add_handler(CallbackQueryHandler(resume_job, pattern=r"^job:resume:\d+$"))

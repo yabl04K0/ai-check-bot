@@ -291,3 +291,16 @@ class ActionLog(Base):
     actor: Mapped[str] = mapped_column(String(64))  # tg_id юзера или "system"
     action: Mapped[str] = mapped_column(String(128))
     details: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class BotSetting(Base):
+    """Общий key/value стор для рантайм-тумблеров, которые должны
+    переживать рестарт бота (в отличие от bot_data-флагов вроде
+    autocheck_enabled_override) — сейчас используется для флагов
+    автономности ИИ (см. app.providers.ai_autonomy), но намеренно
+    универсален, не заводить отдельную таблицу под каждый новый тумблер."""
+
+    __tablename__ = "bot_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(256))

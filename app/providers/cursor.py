@@ -8,9 +8,11 @@ editing-ролей не идемпотентен — вызывающий код
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 from app.db.models import ProviderAccountStatus, ProviderName
+from app.providers.ai_autonomy import ai_github_token_access_enabled
 from app.providers.base import (
     AIProvider,
     AuthStatus,
@@ -38,8 +40,9 @@ def _looks_like_quota_error(text: str) -> bool:
 class CursorProvider(AIProvider):
     name = ProviderName.CURSOR
 
-    def __init__(self, cli_path: str | None) -> None:
+    def __init__(self, cli_path: str | None, github_token: str | None = None) -> None:
         self._cli_path = cli_path
+        self._github_token = github_token
 
     def auth_status(self) -> AuthStatus:
         if not self._cli_path:
@@ -65,12 +68,27 @@ class CursorProvider(AIProvider):
             )
         options = options or RunOptions()
         full_prompt = f"{options.system}\n\n{prompt}" if options.system else prompt
+
+        # По умолчанию CLI-агент НЕ получает GITHUB_TOKEN в окружении —
+        # даже если промпт (см. app.tasks.generic) просит его только
+        # вернуть diff текстом, agentic CLI в принципе может сделать
+        # больше запрошенного; без токена в env у него физически нет
+        # прав на git push/gh, чем бы он ни занялся сам по себе. Выдать
+        # токен — явный opt-in через ⚙️ Настройки (см.
+        # app.providers.ai_autonomy), с дисклеймером перед включением.
+        env = dict(os.environ)
+        if self._github_token and ai_github_token_access_enabled():
+            env["GITHUB_TOKEN"] = self._github_token
+        else:
+            env.pop("GITHUB_TOKEN", None)
+
         try:
             result = subprocess.run(
                 [self._cli_path, "-p", full_prompt],
                 capture_output=True,
                 text=True,
                 timeout=600,
+                env=env,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ProviderError(f"cursor-agent CLI error: {exc}") from exc

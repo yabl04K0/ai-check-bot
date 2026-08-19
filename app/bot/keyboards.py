@@ -124,5 +124,17 @@ def registry_tabs(project_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def approval_menu(job_id: int) -> InlineKeyboardMarkup:
+    """Запрос на запуск задачи, пока включён доступ ИИ к GITHUB_TOKEN и
+    выключено автоодобрение (см. app.providers.ai_autonomy) — тот же
+    паттерн подтверждения перед выполнением, что у вайб-кодинг-приложений."""
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("✅ Разрешить", callback_data=f"job:approve:{job_id}"),
+             InlineKeyboardButton("❌ Отклонить", callback_data=f"job:reject:{job_id}")],
+        ]
+    )
+
+
 def dismiss_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("OK", callback_data="dismiss")]])
