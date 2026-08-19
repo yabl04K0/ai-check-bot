@@ -99,3 +99,60 @@ def test_mark_resumed_goes_back_to_running(db):
         session.commit()
 
         assert job.status == JobStatus.RUNNING
+
+
+def test_reconcile_orphaned_marks_running_and_paused_manual_as_error(db):
+    with get_session() as session:
+        p1 = _make_project(session, "P1")
+        queue = JobQueue(session)
+        running = queue.enqueue(TaskType.CHECK_FULL, [p1])
+        queue.mark_running(running)
+        paused_manual = queue.enqueue(TaskType.CHECK_LITE, [p1])
+        queue.mark_running(paused_manual)
+        queue.mark_paused_manual(paused_manual)
+        session.commit()
+
+        orphaned = queue.reconcile_orphaned()
+        session.commit()
+
+        assert {j.id for j in orphaned} == {running.id, paused_manual.id}
+        assert running.status == JobStatus.ERROR
+        assert paused_manual.status == JobStatus.ERROR
+        assert "перезапуском" in running.handover_note
+
+
+def test_reconcile_orphaned_leaves_paused_quota_alone(db):
+    """PAUSED_QUOTA законно переживает рестарт — его подхватит
+    scheduler._resume_tick, не reconcile_orphaned."""
+    with get_session() as session:
+        p1 = _make_project(session, "P1")
+        queue = JobQueue(session)
+        job = queue.enqueue(TaskType.CHECK_FULL, [p1])
+        queue.mark_running(job)
+        queue.mark_paused_quota(job, "квота кончилась")
+        session.commit()
+
+        orphaned = queue.reconcile_orphaned()
+
+        assert orphaned == []
+        assert job.status == JobStatus.PAUSED_QUOTA
+
+
+def test_reconcile_orphaned_unblocks_queue_for_new_jobs(db):
+    """Ключевой сценарий: без reconcile is_busy() навечно видит зависшую
+    RUNNING-задачу и блокирует всё остальное после рестарта бота."""
+    with get_session() as session:
+        p1 = _make_project(session, "P1")
+        queue = JobQueue(session)
+        stuck = queue.enqueue(TaskType.CHECK_FULL, [p1])
+        queue.mark_running(stuck)
+        session.commit()
+
+        assert queue.is_busy() is True  # симулируем состояние "после падения бота"
+
+        queue.reconcile_orphaned()
+        session.commit()
+
+        assert queue.is_busy() is False
+        new_job = queue.enqueue(TaskType.CHECK_LITE, [p1])
+        assert queue.next_queued().id == new_job.id

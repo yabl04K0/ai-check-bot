@@ -122,3 +122,25 @@ class JobQueue:
         for job in paused:
             job.status = JobStatus.QUEUED
         return list(paused)
+
+    def reconcile_orphaned(self) -> list[Job]:
+        """Вызывается один раз при старте бота. RUNNING/PAUSED_MANUAL в БД
+        значат "какой-то процесс это выполняет прямо сейчас" — но если бот
+        упал или был перезапущен, этого процесса больше нет, а статус в
+        БД остался. is_busy() видит эти статусы как "занято" и НАВСЕГДА
+        блокирует очередь, потому что никто и никогда их не завершит.
+        PAUSED_QUOTA не трогаем — это законно переживает рестарт, его
+        подхватит scheduler._resume_tick."""
+        from datetime import datetime, timezone
+
+        orphaned = self._session.scalars(
+            select(Job).where(Job.status.in_((JobStatus.RUNNING, JobStatus.PAUSED_MANUAL)))
+        ).all()
+        for job in orphaned:
+            job.status = JobStatus.ERROR
+            job.handover_note = (
+                "Прервано перезапуском бота — процесс, выполнявший задачу, "
+                "больше не существует. Запусти задачу заново, если нужно."
+            )
+            job.finished_at = datetime.now(timezone.utc)
+        return list(orphaned)
