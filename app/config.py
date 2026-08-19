@@ -79,6 +79,22 @@ class ProviderSettings:
     openrouter_model: str | None = None
     openrouter_weekly_token_budget: int | None = None
 
+    together_api_key: str | None = None
+    together_model: str | None = None
+    together_weekly_token_budget: int | None = None
+
+    perplexity_api_key: str | None = None
+    perplexity_model: str | None = None
+    perplexity_weekly_token_budget: int | None = None
+
+    fireworks_api_key: str | None = None
+    fireworks_model: str | None = None
+    fireworks_weekly_token_budget: int | None = None
+
+    cerebras_api_key: str | None = None
+    cerebras_model: str | None = None
+    cerebras_weekly_token_budget: int | None = None
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -140,6 +156,18 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY") or None,
             openrouter_model=os.getenv("OPENROUTER_MODEL") or None,
             openrouter_weekly_token_budget=_int(os.getenv("OPENROUTER_WEEKLY_TOKEN_BUDGET"), 0) or None,
+            together_api_key=os.getenv("TOGETHER_API_KEY") or None,
+            together_model=os.getenv("TOGETHER_MODEL") or None,
+            together_weekly_token_budget=_int(os.getenv("TOGETHER_WEEKLY_TOKEN_BUDGET"), 0) or None,
+            perplexity_api_key=os.getenv("PERPLEXITY_API_KEY") or None,
+            perplexity_model=os.getenv("PERPLEXITY_MODEL") or None,
+            perplexity_weekly_token_budget=_int(os.getenv("PERPLEXITY_WEEKLY_TOKEN_BUDGET"), 0) or None,
+            fireworks_api_key=os.getenv("FIREWORKS_API_KEY") or None,
+            fireworks_model=os.getenv("FIREWORKS_MODEL") or None,
+            fireworks_weekly_token_budget=_int(os.getenv("FIREWORKS_WEEKLY_TOKEN_BUDGET"), 0) or None,
+            cerebras_api_key=os.getenv("CEREBRAS_API_KEY") or None,
+            cerebras_model=os.getenv("CEREBRAS_MODEL") or None,
+            cerebras_weekly_token_budget=_int(os.getenv("CEREBRAS_WEEKLY_TOKEN_BUDGET"), 0) or None,
         ),
         github_token=os.getenv("GITHUB_TOKEN") or None,
         autocheck=AutocheckSettings(

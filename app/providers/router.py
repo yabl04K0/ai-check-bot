@@ -24,6 +24,9 @@ _EXTRA_FALLBACK = [
     ProviderName.GROK,
     ProviderName.MISTRAL,
     ProviderName.OPENROUTER,
+    ProviderName.TOGETHER,
+    ProviderName.PERPLEXITY,
+    ProviderName.FIREWORKS,
 ]
 
 # Приоритет провайдеров по умолчанию для каждого типа задачи (первый — предпочтительный).
@@ -40,6 +43,7 @@ DEFAULT_PRIORITY: dict[TaskType, list[ProviderName]] = {
     TaskType.CHECK_LITE: [
         ProviderName.LOCAL_LLM,
         ProviderName.GROQ,
+        ProviderName.CEREBRAS,
         ProviderName.CLAUDE,
         ProviderName.CODEX,
         *_EXTRA_FALLBACK,
@@ -53,6 +57,7 @@ DEFAULT_PRIORITY: dict[TaskType, list[ProviderName]] = {
         ProviderName.CURSOR,
         ProviderName.LOCAL_LLM,
         ProviderName.GROQ,
+        ProviderName.CEREBRAS,
         *_EXTRA_FALLBACK,
     ],
 }

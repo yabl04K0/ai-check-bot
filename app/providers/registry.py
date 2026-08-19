@@ -5,17 +5,21 @@ from __future__ import annotations
 from app.config import Settings
 from app.db.models import ProviderName
 from app.providers.base import AIProvider
+from app.providers.cerebras import CerebrasProvider
 from app.providers.claude import ClaudeProvider
 from app.providers.codex import CodexProvider
 from app.providers.cursor import CursorProvider
 from app.providers.deepseek import DeepSeekProvider
+from app.providers.fireworks import FireworksProvider
 from app.providers.gemini import GeminiProvider
 from app.providers.grok import GrokProvider
 from app.providers.groq import GroqProvider
 from app.providers.local_llm import LocalLLMProvider
 from app.providers.mistral import MistralProvider
 from app.providers.openrouter import OpenRouterProvider
+from app.providers.perplexity import PerplexityProvider
 from app.providers.quota import QuotaTracker
+from app.providers.together import TogetherProvider
 
 
 def build_providers(settings: Settings) -> dict[ProviderName, AIProvider]:
@@ -60,6 +64,26 @@ def build_providers(settings: Settings) -> dict[ProviderName, AIProvider]:
             p.openrouter_api_key,
             QuotaTracker(ProviderName.OPENROUTER, p.openrouter_weekly_token_budget),
             model=p.openrouter_model,
+        ),
+        ProviderName.TOGETHER: TogetherProvider(
+            p.together_api_key,
+            QuotaTracker(ProviderName.TOGETHER, p.together_weekly_token_budget),
+            model=p.together_model,
+        ),
+        ProviderName.PERPLEXITY: PerplexityProvider(
+            p.perplexity_api_key,
+            QuotaTracker(ProviderName.PERPLEXITY, p.perplexity_weekly_token_budget),
+            model=p.perplexity_model,
+        ),
+        ProviderName.FIREWORKS: FireworksProvider(
+            p.fireworks_api_key,
+            QuotaTracker(ProviderName.FIREWORKS, p.fireworks_weekly_token_budget),
+            model=p.fireworks_model,
+        ),
+        ProviderName.CEREBRAS: CerebrasProvider(
+            p.cerebras_api_key,
+            QuotaTracker(ProviderName.CEREBRAS, p.cerebras_weekly_token_budget),
+            model=p.cerebras_model,
         ),
     }
 

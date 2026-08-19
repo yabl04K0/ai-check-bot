@@ -67,6 +67,10 @@ class ProviderName(str, enum.Enum):
     GROQ = "groq"
     MISTRAL = "mistral"
     OPENROUTER = "openrouter"
+    TOGETHER = "together"
+    PERPLEXITY = "perplexity"
+    FIREWORKS = "fireworks"
+    CEREBRAS = "cerebras"
 
 
 class ProviderMode(str, enum.Enum):

@@ -1,8 +1,9 @@
-"""Новые провайдеры (Gemini/DeepSeek/Grok/Groq/Mistral/OpenRouter) все
-реализованы через общий app.providers.openai_compatible.OpenAICompatibleProvider
-— тестируем контракт один раз через базовый класс плюс по разу на каждый
-подкласс (правильные base_url/default_model/имя для сообщений об ошибках),
-чтобы не дублировать одну и ту же HTTP-логику в 6 файлах тестов."""
+"""Новые провайдеры (Gemini/DeepSeek/Grok/Groq/Mistral/OpenRouter/Together/
+Perplexity/Fireworks/Cerebras) все реализованы через общий
+app.providers.openai_compatible.OpenAICompatibleProvider — тестируем
+контракт один раз через базовый класс плюс по разу на каждый подкласс
+(правильные base_url/default_model/имя для сообщений об ошибках), чтобы
+не дублировать одну и ту же HTTP-логику в 10 файлах тестов."""
 
 from __future__ import annotations
 
@@ -11,12 +12,16 @@ import pytest
 
 from app.db.models import ProviderAccountStatus, ProviderName
 from app.providers.base import ProviderError, ProviderNotAuthenticatedError, ProviderQuotaExceededError
+from app.providers.cerebras import CerebrasProvider
 from app.providers.deepseek import DeepSeekProvider
+from app.providers.fireworks import FireworksProvider
 from app.providers.gemini import GeminiProvider
 from app.providers.grok import GrokProvider
 from app.providers.groq import GroqProvider
 from app.providers.mistral import MistralProvider
 from app.providers.openrouter import OpenRouterProvider
+from app.providers.perplexity import PerplexityProvider
+from app.providers.together import TogetherProvider
 
 
 def _fake_post_returning(status_code: int, json_body: dict | None = None):
@@ -47,6 +52,10 @@ ALL_SUBCLASSES = [
     GroqProvider,
     MistralProvider,
     OpenRouterProvider,
+    TogetherProvider,
+    PerplexityProvider,
+    FireworksProvider,
+    CerebrasProvider,
 ]
 
 
@@ -138,6 +147,10 @@ def test_all_new_providers_wired_into_registry():
             groq_api_key="q",
             mistral_api_key="m",
             openrouter_api_key="o",
+            together_api_key="t",
+            perplexity_api_key="p",
+            fireworks_api_key="f",
+            cerebras_api_key="c",
         ),
         github_token=None,
         autocheck=AutocheckSettings(),
@@ -152,6 +165,10 @@ def test_all_new_providers_wired_into_registry():
         ProviderName.GROQ,
         ProviderName.MISTRAL,
         ProviderName.OPENROUTER,
+        ProviderName.TOGETHER,
+        ProviderName.PERPLEXITY,
+        ProviderName.FIREWORKS,
+        ProviderName.CEREBRAS,
     ):
         assert expected in providers
         assert providers[expected].auth_status().status == ProviderAccountStatus.CONNECTED
