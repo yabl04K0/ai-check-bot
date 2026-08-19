@@ -10,20 +10,35 @@ from __future__ import annotations
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import (
-    Boolean,
-    DateTime,
-    ForeignKey,
-    Integer,
-    String,
-    Text,
-    UniqueConstraint,
-)
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _enum_type(enum_cls: type[enum.Enum], length: int) -> SQLEnum:
+    """Enum-колонка, которая реально восстанавливает Python enum-объект
+    после перезагрузки из свежей сессии — важно, потому что почти весь
+    код сравнивает через .value / is TaskType.X и т.п.
+
+    Раньше эти поля были просто String(N): SQLite прекрасно хранил и
+    читал строку, но SQLAlchemy не оборачивал её обратно в enum — Job,
+    загруженный в НОВОЙ сессии (а это почти каждый реальный вызов —
+    каждое нажатие кнопки в боте открывает свою сессию), отдавал
+    job.task_type как голый str без .value, что падало на первом же
+    обращении к .value (например, в commit_yes). values_callable — чтобы
+    в БД по-прежнему шли строчные значения ("fix", не "FIX") и не ломать
+    то, что уже туда что-то писал (registry_store и т.д. сравнивают
+    именно с .value)."""
+    return SQLEnum(
+        enum_cls,
+        values_callable=lambda e: [member.value for member in e],
+        native_enum=False,
+        length=length,
+    )
 
 
 class Base(DeclarativeBase):
@@ -133,10 +148,12 @@ class Job(Base):
     __tablename__ = "jobs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    task_type: Mapped[TaskType] = mapped_column(String(32))
-    provider: Mapped[ProviderName | None] = mapped_column(String(32), nullable=True)
-    provider_mode: Mapped[ProviderMode] = mapped_column(String(16), default=ProviderMode.MANUAL)
-    status: Mapped[JobStatus] = mapped_column(String(16), default=JobStatus.QUEUED)
+    task_type: Mapped[TaskType] = mapped_column(_enum_type(TaskType, 32))
+    provider: Mapped[ProviderName | None] = mapped_column(_enum_type(ProviderName, 32), nullable=True)
+    provider_mode: Mapped[ProviderMode] = mapped_column(
+        _enum_type(ProviderMode, 16), default=ProviderMode.MANUAL
+    )
+    status: Mapped[JobStatus] = mapped_column(_enum_type(JobStatus, 16), default=JobStatus.QUEUED)
 
     # "all" / "all_ignore_registry" / "path:..."
     scope: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -173,8 +190,10 @@ class Finding(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
-    status: Mapped[FindingStatus] = mapped_column(String(16), default=FindingStatus.OPEN)
-    severity: Mapped[Severity | None] = mapped_column(String(16), nullable=True)
+    status: Mapped[FindingStatus] = mapped_column(
+        _enum_type(FindingStatus, 16), default=FindingStatus.OPEN
+    )
+    severity: Mapped[Severity | None] = mapped_column(_enum_type(Severity, 16), nullable=True)
     file_symbol: Mapped[str] = mapped_column(String(512))
     pattern: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str] = mapped_column(Text)
@@ -192,9 +211,11 @@ class HistoryEntry(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
     job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id"), nullable=True)
-    task_type: Mapped[TaskType] = mapped_column(String(32))
-    provider: Mapped[ProviderName | None] = mapped_column(String(32), nullable=True)
-    provider_mode: Mapped[ProviderMode] = mapped_column(String(16), default=ProviderMode.MANUAL)
+    task_type: Mapped[TaskType] = mapped_column(_enum_type(TaskType, 32))
+    provider: Mapped[ProviderName | None] = mapped_column(_enum_type(ProviderName, 32), nullable=True)
+    provider_mode: Mapped[ProviderMode] = mapped_column(
+        _enum_type(ProviderMode, 16), default=ProviderMode.MANUAL
+    )
     result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     commit_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -209,9 +230,9 @@ class ProviderAccount(Base):
     __table_args__ = (UniqueConstraint("provider", name="uq_provider_account"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    provider: Mapped[ProviderName] = mapped_column(String(32))
+    provider: Mapped[ProviderName] = mapped_column(_enum_type(ProviderName, 32))
     status: Mapped[ProviderAccountStatus] = mapped_column(
-        String(16), default=ProviderAccountStatus.NOT_CONNECTED
+        _enum_type(ProviderAccountStatus, 16), default=ProviderAccountStatus.NOT_CONNECTED
     )
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -236,7 +257,7 @@ class QuotaUsageLog(Base):
     __tablename__ = "quota_usage_log"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    provider: Mapped[ProviderName] = mapped_column(String(32))
+    provider: Mapped[ProviderName] = mapped_column(_enum_type(ProviderName, 32))
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)

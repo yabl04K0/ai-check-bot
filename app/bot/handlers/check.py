@@ -421,7 +421,8 @@ def _apply_and_commit_blocking(job_id: int, github_token: str | None) -> str:
             return f"❌ Не удалось применить патч в {target.name}:\n{apply_detail[:1500]}"
 
         short_comment = (comment or "изменения от ai-check-bot")[:72]
-        commit_message = f"{TASK_TYPE_LABELS.get(task_type, task_type.value)}: {short_comment}"
+        task_label = TASK_TYPE_LABELS.get(task_type, str(task_type))
+        commit_message = f"{task_label}: {short_comment}"
         ok, commit_detail = commit_all(path, commit_message)
         if not ok:
             return f"⚠️ Патч применён в {target.name}, но commit не удался:\n{commit_detail[:1500]}"

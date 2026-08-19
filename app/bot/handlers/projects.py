@@ -44,8 +44,10 @@ async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def _project_settings_menu(project: Project) -> InlineKeyboardMarkup:
     auto_label = "🔔 Авточек: вкл" if project.autocheck_enabled else "🔔 Авточек: выкл"
+    self_label = "🤖 Self-check: вкл" if project.is_self else "🤖 Self-check: выкл"
     rows = [
         [InlineKeyboardButton(auto_label, callback_data=f"proj:toggle_auto:{project.id}")],
+        [InlineKeyboardButton(self_label, callback_data=f"proj:toggle_self:{project.id}")],
         [InlineKeyboardButton("📜 Реестр багов", callback_data=f"reg:tab:{project.id}:open")],
         [InlineKeyboardButton("🕘 История", callback_data=f"hist:proj:{project.id}")],
         [InlineKeyboardButton("🗑️ Убрать из списка", callback_data=f"proj:del:{project.id}")],
@@ -66,7 +68,8 @@ async def manage_project(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         text = (
             f"⚙️ {project.name}\n"
             f"repo: {project.repo_full_name}\n"
-            f"local_path: {project.local_path or '(не задан)'}"
+            f"local_path: {project.local_path or '(не задан)'}\n"
+            f"self-check: {'да' if project.is_self else 'нет'}"
         )
         markup = _project_settings_menu(project)
     await query.edit_message_text(text, reply_markup=markup)
@@ -81,6 +84,25 @@ async def toggle_autocheck(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await query.answer("Проект не найден.")
             return
         project.autocheck_enabled = not project.autocheck_enabled
+        session.commit()
+        text = f"⚙️ {project.name}\nrepo: {project.repo_full_name}"
+        markup = _project_settings_menu(project)
+    await query.answer("Ок")
+    await query.edit_message_text(text, reply_markup=markup)
+
+
+async def toggle_self_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """is_self защищает от автопуша (см. commit_yes в bot/handlers/check.py)
+    и раньше нигде не выставлялся — self-check не срабатывал ни разу,
+    даже когда проект действительно был репозиторием самого бота."""
+    query = update.callback_query
+    project_id = int(query.data.split(":")[-1])
+    with get_session() as session:
+        project = session.get(Project, project_id)
+        if project is None:
+            await query.answer("Проект не найден.")
+            return
+        project.is_self = not project.is_self
         session.commit()
         text = f"⚙️ {project.name}\nrepo: {project.repo_full_name}"
         markup = _project_settings_menu(project)
@@ -134,5 +156,6 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(prompt_add_project, pattern=r"^proj:add$"))
     application.add_handler(CallbackQueryHandler(manage_project, pattern=r"^proj:manage:\d+$"))
     application.add_handler(CallbackQueryHandler(toggle_autocheck, pattern=r"^proj:toggle_auto:\d+$"))
+    application.add_handler(CallbackQueryHandler(toggle_self_check, pattern=r"^proj:toggle_self:\d+$"))
     application.add_handler(CallbackQueryHandler(delete_project, pattern=r"^proj:del:\d+$"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text), group=1)
