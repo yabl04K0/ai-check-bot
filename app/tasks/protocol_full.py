@@ -11,7 +11,9 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 
 from app.providers.base import ProviderError, RunOptions
+from app.registry_store.store import RegistryFinding, register_or_bump_finding
 from app.tasks import project_context as ctxdata
+from app.tasks.findings_parse import parse_structured_findings
 from app.tasks.pipeline import Step, StepContext
 
 MAX_CONVERGENCE_ROUNDS = 3
@@ -118,6 +120,54 @@ class Step8GapFinder(Step):
         )
         result = ctx.provider.run_prompt(prompt, RunOptions(system="Ты — gap-finder, ищешь пропущенное."))
         ctx.state["gaps"] = result.text
+
+
+class Step8bRegisterFindings(Step):
+    """Дописывает находки в chek_open.md проекта — до этого шага Full ЧЕК
+    только генерировал текст отчёта, реестр (📜 в боте) оставался пустым
+    даже после реального прогона."""
+
+    label = "8b. Регистрация находок в chek_open.md"
+
+    def run(self, ctx: StepContext) -> None:
+        project_names = ", ".join(p.name for p in ctx.projects)
+        prompt = (
+            f"Отчёт аудита:\n{ctx.state.get('aggregated_report', '')}\n\n"
+            f"Пробелы:\n{ctx.state.get('gaps', '')}\n\n"
+            f"Проекты в этом прогоне: {project_names}\n\n"
+            "Составь список находок для реестра. Ответь СТРОГО по одной "
+            "находке на строку в формате:\n"
+            "severity|project|file::symbol|краткое описание\n"
+            "где severity — critical/high/medium, project — точное имя "
+            "одного из проектов выше, file::symbol — файл и место в коде "
+            "через '::'. Без заголовков, нумерации, markdown и пояснений "
+            "вне этого формата — только сами строки."
+        )
+        result = ctx.provider.run_prompt(
+            prompt, RunOptions(system="Ты составляешь реестр находок в строгом машиночитаемом формате.")
+        )
+        parsed = parse_structured_findings(result.text)
+        projects_by_name = {p.name: p for p in ctx.projects}
+
+        registered = bumped = skipped = 0
+        for pf in parsed:
+            project = projects_by_name.get(pf.project_name)
+            path = ctxdata.local_path(project) if project else None
+            if path is None:
+                skipped += 1
+                continue
+            is_new = register_or_bump_finding(
+                path,
+                RegistryFinding(file_symbol=pf.file_symbol, description=pf.description, severity=pf.severity),
+            )
+            if is_new:
+                registered += 1
+            else:
+                bumped += 1
+
+        ctx.state["findings_registered"] = registered
+        ctx.state["findings_bumped"] = bumped
+        ctx.state["findings_skipped"] = skipped
 
 
 class Step9Fixer(Step):
@@ -232,11 +282,16 @@ class Step13HumanConfirm(Step):
         # в прозе), чем гарантированно применимый diff. Реально применяемый
         # патч под одну задачу получается через "Фикс всё/выборочно" →
         # отдельный FIX-job на generic-пайплайне (см. app/tasks/generic.py).
+        skipped = ctx.state.get("findings_skipped", 0)
+        skipped_note = f", пропущено {skipped} (не распарсилось/нет local_path)" if skipped else ""
+
         ctx.state["patch"] = ctx.state.get("fix_proposal")
         ctx.state["final_report"] = (
             f"Домены: {', '.join(ctx.state.get('domains', []))}\n"
             f"Раундов конвергенции: {ctx.state.get('convergence_rounds', 0)}"
-            f"{' (эскалировано)' if ctx.state.get('escalated') else ''}\n\n"
+            f"{' (эскалировано)' if ctx.state.get('escalated') else ''}\n"
+            f"Реестр: новых находок {ctx.state.get('findings_registered', 0)}, "
+            f"повторных {ctx.state.get('findings_bumped', 0)}{skipped_note}\n\n"
             f"Отчёт:\n{ctx.state.get('aggregated_report', '')}\n\n"
             f"Пробелы:\n{ctx.state.get('gaps', '')}\n\n"
             f"Финальный фикс:\n{ctx.state.get('fix_proposal', '')}\n\n"
@@ -252,6 +307,7 @@ def build_steps() -> list[Step]:
         Step6FleetCheckers(),
         Step7Aggregation(),
         Step8GapFinder(),
+        Step8bRegisterFindings(),
         Step9Fixer(),
         Step10Critics(),
         Step11ConvergenceLoop(),

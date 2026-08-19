@@ -172,3 +172,28 @@ def add_open_finding(project_path: Path, finding: RegistryFinding) -> None:
     finding.updated = finding.updated or finding.created
     registry.open.append(finding)
     write_registry(project_path, registry)
+
+
+def register_or_bump_finding(project_path: Path, finding: RegistryFinding) -> bool:
+    """Как add_open_finding, но не плодит дубликаты между прогонами ЧЕКа:
+    если находка с таким file_symbol уже есть в open — просто +1 к
+    attempts и обновляет severity/описание, вместо второй записи.
+
+    Возвращает True если находка новая, False если это был bump."""
+    registry = read_registry(project_path)
+    for existing in registry.open:
+        if existing.file_symbol == finding.file_symbol:
+            existing.attempts += 1
+            existing.updated = date.today().isoformat()
+            if finding.severity:
+                existing.severity = finding.severity
+            if finding.description:
+                existing.description = finding.description
+            write_registry(project_path, registry)
+            return False
+
+    finding.created = finding.created or date.today().isoformat()
+    finding.updated = finding.updated or finding.created
+    registry.open.append(finding)
+    write_registry(project_path, registry)
+    return True

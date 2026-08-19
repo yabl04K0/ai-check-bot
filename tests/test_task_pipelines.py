@@ -70,7 +70,7 @@ def test_lite_pipeline_triggers_fix_on_keyword(db):
 def test_full_check_pipeline_completes_end_to_end(db):
     job, provider = _run(db, TaskType.CHECK_FULL, comment="полный прогон")
     assert job.status.value == "done"
-    assert job.progress_step == job.progress_total == 11
+    assert job.progress_step == job.progress_total == 12
     assert job.report_text
     assert "Финальный фикс" in job.report_text
     # 4b без триггера не должен звать провайдера — проверяем, что вызовов
