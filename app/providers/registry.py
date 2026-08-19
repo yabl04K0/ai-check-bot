@@ -29,10 +29,16 @@ def build_providers(settings: Settings) -> dict[ProviderName, AIProvider]:
 
 
 class ProviderRegistry:
-    """Хранит собранные провайдеры, отдаёт по имени."""
+    """Хранит собранные провайдеры, отдаёт по имени.
+
+    disable()/enable() — "мягкое" отключение из бота (⚙️ Настройки →
+    🔌 Провайдеры ИИ → Отключить): секрет в .env не трогаем и не можем
+    (это не сессия, а статический ключ/CLI-путь), но роутер и connected()
+    перестают его видеть, пока не нажали "Подключить обратно"."""
 
     def __init__(self, providers: dict[ProviderName, AIProvider]) -> None:
         self._providers = providers
+        self._disabled: set[ProviderName] = set()
 
     @classmethod
     def from_settings(cls, settings: Settings) -> ProviderRegistry:
@@ -47,11 +53,21 @@ class ProviderRegistry:
     def all(self) -> dict[ProviderName, AIProvider]:
         return dict(self._providers)
 
+    def disable(self, name: ProviderName) -> None:
+        self._disabled.add(name)
+
+    def enable(self, name: ProviderName) -> None:
+        self._disabled.discard(name)
+
+    def is_disabled(self, name: ProviderName) -> bool:
+        return name in self._disabled
+
     def connected(self) -> list[ProviderName]:
         from app.db.models import ProviderAccountStatus
 
         return [
             name
             for name, provider in self._providers.items()
-            if provider.auth_status().status == ProviderAccountStatus.CONNECTED
+            if name not in self._disabled
+            and provider.auth_status().status == ProviderAccountStatus.CONNECTED
         ]

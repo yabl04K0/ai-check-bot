@@ -34,13 +34,32 @@ def _settings_view(context: ContextTypes.DEFAULT_TYPE) -> tuple[str, InlineKeybo
         "",
         "🔌 Провайдеры ИИ:",
     ]
-    login_rows = []
+    provider_rows = []
     for name, provider in registry.all().items():
         status = provider.auth_status()
+        disabled = registry.is_disabled(name)
+
+        if disabled:
+            lines.append(f"  {name.value}: отключено вручную")
+            enable_button = InlineKeyboardButton(
+                f"🔌 Подключить обратно: {name.value}", callback_data=f"set:enable:{name.value}"
+            )
+            provider_rows.append([enable_button])
+            continue
+
         detail_suffix = f" ({status.detail})" if status.detail else ""
         lines.append(f"  {name.value}: {status.status.value}{detail_suffix}")
-        if provider.supports_login() and status.status != ProviderAccountStatus.CONNECTED:
-            login_rows.append(
+
+        if status.status == ProviderAccountStatus.CONNECTED:
+            refresh_button = InlineKeyboardButton(
+                f"🔄 Обновить: {name.value}", callback_data=f"set:refresh:{name.value}"
+            )
+            disable_button = InlineKeyboardButton(
+                f"🔌 Отключить: {name.value}", callback_data=f"set:disable:{name.value}"
+            )
+            provider_rows.append([refresh_button, disable_button])
+        elif provider.supports_login():
+            provider_rows.append(
                 [InlineKeyboardButton(f"🔑 Войти: {name.value}", callback_data=f"set:login:{name.value}")]
             )
 
@@ -49,7 +68,7 @@ def _settings_view(context: ContextTypes.DEFAULT_TYPE) -> tuple[str, InlineKeybo
             f"🔔 Авточек: {'выключить' if autocheck_on else 'включить'}",
             callback_data="set:toggle_autocheck",
         )],
-        *login_rows,
+        *provider_rows,
         [back_button()],
     ]
     return "\n".join(lines), InlineKeyboardMarkup(rows)
@@ -81,6 +100,35 @@ async def login_provider(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         str(update.effective_user.id), "provider_login_attempt", f"{provider_name.value}: {text[:200]}"
     )
     await context.bot.send_message(update.effective_chat.id, text[:4000])
+    await query.edit_message_text(*_settings_view(context))
+
+
+async def refresh_provider(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Явный триггер перечитать auth_status() — сам статус и так живой на
+    каждом рендере Настроек, но кнопка даёт понятную обратную связь
+    ("проверил именно сейчас"), особенно после логина в другом окне/CLI."""
+    query = update.callback_query
+    await query.answer("Обновляю статус…")
+    await query.edit_message_text(*_settings_view(context))
+
+
+async def disable_provider(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    provider_name = ProviderName(query.data.split(":")[-1])
+    registry: ProviderRegistry = context.application.bot_data["provider_registry"]
+    registry.disable(provider_name)
+    log_action(str(update.effective_user.id), "provider_disabled", provider_name.value)
+    await query.answer("Отключено")
+    await query.edit_message_text(*_settings_view(context))
+
+
+async def enable_provider(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    provider_name = ProviderName(query.data.split(":")[-1])
+    registry: ProviderRegistry = context.application.bot_data["provider_registry"]
+    registry.enable(provider_name)
+    log_action(str(update.effective_user.id), "provider_enabled", provider_name.value)
+    await query.answer("Подключено")
     await query.edit_message_text(*_settings_view(context))
 
 
@@ -155,6 +203,9 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(show_settings, pattern=r"^menu:settings$"))
     application.add_handler(CallbackQueryHandler(toggle_autocheck_global, pattern=r"^set:toggle_autocheck$"))
     application.add_handler(CallbackQueryHandler(login_provider, pattern=r"^set:login:\w+$"))
+    application.add_handler(CallbackQueryHandler(refresh_provider, pattern=r"^set:refresh:\w+$"))
+    application.add_handler(CallbackQueryHandler(disable_provider, pattern=r"^set:disable:\w+$"))
+    application.add_handler(CallbackQueryHandler(enable_provider, pattern=r"^set:enable:\w+$"))
     application.add_handler(CallbackQueryHandler(show_history_projects, pattern=r"^menu:history$"))
     application.add_handler(CallbackQueryHandler(show_history_for_project, pattern=r"^hist:proj:\d+$"))
     application.add_handler(CallbackQueryHandler(show_admin, pattern=r"^menu:admin$"))
