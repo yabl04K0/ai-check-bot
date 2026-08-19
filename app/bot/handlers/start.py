@@ -13,7 +13,8 @@ ONBOARDING_TEXT = (
     "👋 Онбординг\n\n"
     "GitHub-токен и ключи ИИ-провайдеров задаются один раз на сервере бота "
     "(.env), не в чате — см. Настройки → 🔌 Провайдеры ИИ для статуса "
-    "подключения."
+    "подключения.\n\n"
+    "создано [yabl04K0](https://guns.lol/yabl04K0)"
 )
 
 MAIN_MENU_TEXT = "🏠 ГЛАВНОЕ МЕНЮ"
@@ -40,7 +41,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _ensure_user(user.id, user.full_name, is_admin)
 
     if not seen_before:
-        await update.effective_chat.send_message(ONBOARDING_TEXT)
+        await update.effective_chat.send_message(
+            ONBOARDING_TEXT, parse_mode="Markdown", disable_web_page_preview=True
+        )
 
     await update.effective_chat.send_message(MAIN_MENU_TEXT, reply_markup=main_menu())
 
