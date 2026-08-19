@@ -31,6 +31,14 @@ TICK_INTERVAL_MINUTES = 15
 RESUME_INTERVAL_MINUTES = 5
 
 
+_PENDING_AUTO_STATUSES = (
+    JobStatus.QUEUED,
+    JobStatus.RUNNING,
+    JobStatus.PAUSED_MANUAL,
+    JobStatus.PAUSED_QUOTA,
+)
+
+
 async def _tick(application: Application) -> None:
     settings = application.bot_data["settings"]
     enabled = application.bot_data.get("autocheck_enabled_override", settings.autocheck.enabled)
@@ -42,6 +50,18 @@ async def _tick(application: Application) -> None:
     task_type = decision.task_type
 
     with get_session() as session:
+        already_pending = session.scalar(
+            select(Job).where(
+                Job.provider_mode == ProviderMode.AUTO,
+                Job.status.in_(_PENDING_AUTO_STATUSES),
+            )
+        )
+        if already_pending is not None:
+            # Тик каждые 15 мин, условие квоты может держаться часами —
+            # без этой проверки очередь копила бы дубликат автопроверки
+            # на каждом тике, пока условие не перестанет выполняться.
+            return
+
         projects = session.scalars(select(Project).where(Project.autocheck_enabled.is_(True))).all()
         if not projects:
             return
