@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.config import load_settings
 
 
@@ -34,8 +36,5 @@ def test_load_settings_defaults_when_unset(monkeypatch, tmp_path):
 def test_require_bot_token_raises_when_missing(monkeypatch, tmp_path):
     monkeypatch.delenv("BOT_TOKEN", raising=False)
     settings = load_settings(env_file=tmp_path / "does-not-exist.env")
-    try:
+    with pytest.raises(RuntimeError):
         settings.require_bot_token()
-        assert False, "должен был кинуть RuntimeError"
-    except RuntimeError:
-        pass

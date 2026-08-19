@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.db.models import JobStatus, Project, TaskType
 from app.db.session import get_session
 from app.tasks.queue import JobQueue
@@ -64,8 +66,5 @@ def test_pause_and_resume_handover(db):
 def test_enqueue_missing_project_raises(db):
     with get_session() as session:
         queue = JobQueue(session)
-        try:
+        with pytest.raises(ValueError):
             queue.enqueue(TaskType.CHECK_FULL, [999])
-            assert False, "должен был кинуть ValueError"
-        except ValueError:
-            pass

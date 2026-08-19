@@ -146,7 +146,7 @@ def move_finding(
     buckets = {"open": registry.open, "later": registry.later, "never": registry.never}
 
     found: RegistryFinding | None = None
-    for status, items in buckets.items():
+    for items in buckets.values():
         for finding in items:
             if finding.file_symbol == file_symbol:
                 found = finding

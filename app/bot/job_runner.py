@@ -23,7 +23,7 @@ from app.logging_setup import log_action
 from app.providers.registry import ProviderRegistry
 from app.providers.router import NoProviderAvailableError, pick_provider
 from app.tasks.factory import build_pipeline
-from app.tasks.pipeline import PipelineCancelled, PipelineInterrupted, StepContext
+from app.tasks.pipeline import PipelineInterrupted, StepContext
 from app.tasks.queue import JobQueue
 from app.tasks.types import TASK_TYPE_LABELS
 
@@ -58,7 +58,7 @@ async def start_job(application: Application, job_id: int) -> None:
     progress_task = asyncio.create_task(_progress_loop(application, job_id, chat_id, progress_message))
 
     try:
-        result_state = await asyncio.to_thread(_run_pipeline_blocking, application, job_id)
+        await asyncio.to_thread(_run_pipeline_blocking, application, job_id)
     finally:
         progress_task.cancel()
         try:

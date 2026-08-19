@@ -11,7 +11,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from github import Github
+from github import Auth, Github
 from github.GithubException import GithubException
 
 
@@ -33,7 +33,7 @@ class GitHubClient:
     def __init__(self, token: str) -> None:
         if not token:
             raise GitHubError("GITHUB_TOKEN не задан.")
-        self._gh = Github(token)
+        self._gh = Github(auth=Auth.Token(token))
         self._token = token
 
     def list_repos(self) -> list[RepoStatus]:
