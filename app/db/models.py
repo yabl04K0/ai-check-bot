@@ -217,6 +217,19 @@ class ProviderAccount(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class GithubTokenState(Base):
+    """Когда бот впервые увидел текущий GITHUB_TOKEN — для напоминания о
+    ротации раз в 30 дней (см. README, GitHub-интеграция). Настоящую дату
+    выпуска токена fine-grained PAT не отдаёт по API, поэтому это оценка
+    "с какого момента бот об этом токене знает", не точная дата выпуска —
+    честная оценка, а не выдумка (тот же принцип, что у QuotaUsageLog)."""
+
+    __tablename__ = "github_token_state"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class QuotaUsageLog(Base):
     """Собственная оценка расхода квоты по провайдеру/модели (нет офиц. API)."""
 

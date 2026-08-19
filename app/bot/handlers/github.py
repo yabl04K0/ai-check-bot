@@ -7,7 +7,9 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 
 from app.bot.keyboards import back_button
+from app.db.session import get_session
 from app.github_integration.client import GitHubClient, GitHubError
+from app.github_integration.rotation import check_token_age
 from app.logging_setup import log_action
 
 
@@ -42,8 +44,47 @@ async def show_github_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         for i, r in enumerate(repos)
     ]
     rows.append([InlineKeyboardButton("⚡ Закрыть все публичные", callback_data="gh:close_public")])
+    rows.append([InlineKeyboardButton("🔑 Токен", callback_data="gh:token")])
     rows.append([back_button()])
-    await query.edit_message_text("📋 Репозитории:", reply_markup=InlineKeyboardMarkup(rows))
+
+    settings = context.application.bot_data["settings"]
+    with get_session() as session:
+        age = check_token_age(session, settings.github_token)
+        session.commit()
+    header = "📋 Репозитории:"
+    if age.needs_rotation_warning:
+        header = f"⚠️ Токену {age.days_since} дн. — пора переиздать (см. 🔑 Токен)\n\n{header}"
+
+    await query.edit_message_text(header, reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def show_token_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    settings = context.application.bot_data["settings"]
+    if not settings.github_token:
+        await query.edit_message_text("GitHub-токен не задан.", reply_markup=back_button("menu:github"))
+        return
+
+    with get_session() as session:
+        age = check_token_age(session, settings.github_token)
+        session.commit()
+
+    if age.needs_rotation_warning:
+        status_line = f"⚠️ Активен уже {age.days_since} дн. — пора переиздать"
+    else:
+        status_line = f"✅ Активен, {age.days_since} дн. с момента, как бот увидел этот токен"
+
+    text = (
+        f"🔑 Токен\n{status_line}\n\n"
+        "Переиздать: создай новый fine-grained PAT в GitHub (Settings → "
+        "Developer settings), обнови GITHUB_TOKEN в .env и перезапусти "
+        "бота — сам бот токен не меняет, это ручной шаг за пределами чата.\n\n"
+        "(Дата создания токена не отдаётся GitHub API для fine-grained PAT — "
+        "отсчёт идёт с момента, когда бот впервые увидел этот токен, это "
+        "оценка, не точная дата выпуска.)"
+    )
+    await query.edit_message_text(text, reply_markup=back_button("menu:github"))
 
 
 def _repo_menu(index: int, private: bool) -> InlineKeyboardMarkup:
@@ -152,6 +193,7 @@ async def close_public(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(show_github_menu, pattern=r"^menu:github$"))
+    application.add_handler(CallbackQueryHandler(show_token_status, pattern=r"^gh:token$"))
     application.add_handler(CallbackQueryHandler(show_repo, pattern=r"^gh:repo:\d+$"))
     application.add_handler(CallbackQueryHandler(toggle_visibility, pattern=r"^gh:toggle:\d+$"))
     application.add_handler(CallbackQueryHandler(show_issues, pattern=r"^gh:issues:\d+$"))
