@@ -7,9 +7,9 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 
 from app.bot.keyboards import back_button, registry_tabs
-from app.db.models import Project
+from app.db.models import Finding, FindingStatus, Project
 from app.db.session import get_session
-from app.registry_store.store import read_registry
+from app.registry_store.sync import sync_project_findings
 from app.tasks.project_context import local_path as project_local_path
 from app.tasks.types import SEVERITY_EMOJI
 
@@ -41,33 +41,39 @@ async def pick_project(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def show_tab(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Читает из SQLite-кэша (Finding), не из .md напрямую — источник
+    правды по-прежнему файлы в репо, но UI ходит в кэш и синкает его перед
+    показом, если есть локальный чекаут (см. app.registry_store.sync)."""
     query = update.callback_query
     await query.answer()
     _, _, project_id_raw, status = query.data.split(":")
     project_id = int(project_id_raw)
+    target_status = FindingStatus(status)
 
     with get_session() as session:
         project = session.get(Project, project_id)
         if project is None:
             await query.edit_message_text("Проект не найден.", reply_markup=back_button("menu:registry"))
             return
-        path = project_local_path(project)
         name = project.name
+        has_local = project_local_path(project) is not None
+        if has_local:
+            sync_project_findings(session, project)
+            session.commit()
 
-    if path is None:
-        await query.edit_message_text(
-            f"📜 {name} — {STATUS_TITLES[status]}\n(нет локального чекаута — local_path не задан)",
-            reply_markup=registry_tabs(project_id),
-        )
-        return
+        findings = session.scalars(
+            select(Finding)
+            .where(Finding.project_id == project_id, Finding.status == target_status)
+            .order_by(Finding.updated_at.desc())
+        ).all()
+        session.expunge_all()
 
-    registry = read_registry(path)
-    findings = {"open": registry.open, "later": registry.later, "never": registry.never}[status]
+    stale_note = "" if has_local else " (нет local_path — показан последний известный кэш)"
 
     if not findings:
-        text = f"📜 {name} — {STATUS_TITLES[status]} (0)"
+        text = f"📜 {name} — {STATUS_TITLES[status]} (0){stale_note}"
     else:
-        lines = [f"📜 {name} — {STATUS_TITLES[status]} ({len(findings)})"]
+        lines = [f"📜 {name} — {STATUS_TITLES[status]} ({len(findings)}){stale_note}"]
         for f in findings[:20]:
             emoji = SEVERITY_EMOJI.get(f.severity, "") if status == "open" else ""
             extra = f" · attempts={f.attempts}" if status == "open" else f" · {f.reason or ''}"

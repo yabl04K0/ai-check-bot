@@ -26,6 +26,7 @@ from app.db.session import get_session
 from app.github_integration.client import GitHubClient, GitHubError
 from app.logging_setup import log_action
 from app.registry_store.store import move_finding
+from app.registry_store.sync import sync_project_findings
 from app.tasks.patch_apply import apply_patch, commit_all, current_commit_sha
 from app.tasks.project_context import local_path as project_local_path
 from app.tasks.queue import JobQueue
@@ -319,12 +320,16 @@ async def _do_move_finding(update: Update, context: ContextTypes.DEFAULT_TYPE, *
         projects = list(job.projects) if job else []
 
     moved_any = False
-    for project in projects:
-        path = project_local_path(project)
-        if path is None:
-            continue
-        if move_finding(path, file_symbol, to=to, reason=reason):
-            moved_any = True
+    with get_session() as session:
+        for project in projects:
+            path = project_local_path(project)
+            if path is None:
+                continue
+            if move_finding(path, file_symbol, to=to, reason=reason):
+                moved_any = True
+                project = session.merge(project)
+                sync_project_findings(session, project)
+        session.commit()
 
     if moved_any:
         await update.message.reply_text(f"✅ Перенесено в {to}.")

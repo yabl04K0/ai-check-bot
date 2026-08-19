@@ -22,6 +22,7 @@ from app.bot.keyboards import progress_menu, report_menu
 from app.logging_setup import log_action
 from app.providers.registry import ProviderRegistry
 from app.providers.router import NoProviderAvailableError, pick_provider
+from app.registry_store.sync import sync_project_findings
 from app.tasks.factory import build_pipeline
 from app.tasks.pipeline import PipelineInterrupted, StepContext
 from app.tasks.queue import JobQueue
@@ -139,6 +140,11 @@ def _run_pipeline_blocking(application: Application, job_id: int) -> dict:
                         result_summary=(job.report_text or "")[:2000],
                     )
                 )
+                # Job мог поменять содержимое chek_*.md проекта (Full ЧЕК
+                # регистрирует находки, см. app/tasks/protocol_full.py) —
+                # приводим SQLite-кэш в соответствие перед тем, как отдать
+                # управление боту.
+                sync_project_findings(session, project)
             session.commit()
 
         return dict(ctx.state)
