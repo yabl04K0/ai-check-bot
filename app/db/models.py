@@ -128,6 +128,10 @@ class Project(Base):
     history_entries: Mapped[list[HistoryEntry]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    # Без этого удаление проекта оставляет висячие строки в job_projects
+    # (SQLite по умолчанию не проверяет FK — PRAGMA foreign_keys выключен,
+    # так что рассинхрон не упал бы ошибкой, просто тихо накапливался бы).
+    job_links: Mapped[list[JobProject]] = relationship(cascade="all, delete-orphan")
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Project {self.name} ({self.repo_full_name})>"
@@ -177,7 +181,10 @@ class Job(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    projects: Mapped[list[Project]] = relationship(secondary="job_projects")
+    # overlaps: и это, и Project.job_links пишут в job_projects — намеренно
+    # (job_links — владелец каскада удаления, projects — удобный доступ
+    # с стороны Job), а не забытый back_populates.
+    projects: Mapped[list[Project]] = relationship(secondary="job_projects", overlaps="job_links")
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Job #{self.id} {self.task_type} {self.status}>"
