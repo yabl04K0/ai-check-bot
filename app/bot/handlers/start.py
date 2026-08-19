@@ -20,27 +20,26 @@ ONBOARDING_TEXT = (
 MAIN_MENU_TEXT = "🏠 ГЛАВНОЕ МЕНЮ"
 
 
-def _ensure_user(tg_id: int, display_name: str | None, is_admin_default: bool) -> None:
+def _ensure_user(tg_id: int, display_name: str | None, is_admin_default: bool) -> bool:
+    """Возвращает True, если пользователь только что создан (первый /start)."""
     with get_session() as session:
         from sqlalchemy import select
 
         existing = session.scalar(select(User).where(User.tg_id == tg_id))
-        if existing is None:
-            session.add(User(tg_id=tg_id, display_name=display_name, is_admin=is_admin_default))
+        if existing is not None:
+            return False
+        session.add(User(tg_id=tg_id, display_name=display_name, is_admin=is_admin_default))
+        return True
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     settings = context.application.bot_data["settings"]
     is_admin = bool(settings.admin_tg_id and user.id == settings.admin_tg_id)
-    first_time = context.application.bot_data.get("known_users", set())
-    seen_before = user.id in first_time
-    first_time.add(user.id)
-    context.application.bot_data["known_users"] = first_time
 
-    _ensure_user(user.id, user.full_name, is_admin)
+    is_new_user = _ensure_user(user.id, user.full_name, is_admin)
 
-    if not seen_before:
+    if is_new_user:
         await update.effective_chat.send_message(
             ONBOARDING_TEXT, parse_mode="Markdown", disable_web_page_preview=True
         )
