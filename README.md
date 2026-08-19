@@ -214,6 +214,13 @@ python -m app.main    # запуск бота (long polling)
 `scripts/supervise.sh` вместо голого `python -m app.main`: это
 auto-restart loop, поднимающий бота заново при падении.
 
+Через Docker:
+
+```bash
+docker build -t ai-check-bot .
+docker run -d --env-file .env -v ai-check-bot-data:/bot/data ai-check-bot
+```
+
 ## Лицензия
 
 MIT
