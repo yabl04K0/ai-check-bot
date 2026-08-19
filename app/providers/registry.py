@@ -8,7 +8,13 @@ from app.providers.base import AIProvider
 from app.providers.claude import ClaudeProvider
 from app.providers.codex import CodexProvider
 from app.providers.cursor import CursorProvider
+from app.providers.deepseek import DeepSeekProvider
+from app.providers.gemini import GeminiProvider
+from app.providers.grok import GrokProvider
+from app.providers.groq import GroqProvider
 from app.providers.local_llm import LocalLLMProvider
+from app.providers.mistral import MistralProvider
+from app.providers.openrouter import OpenRouterProvider
 from app.providers.quota import QuotaTracker
 
 
@@ -25,6 +31,36 @@ def build_providers(settings: Settings) -> dict[ProviderName, AIProvider]:
         ),
         ProviderName.CURSOR: CursorProvider(p.cursor_agent_cli_path),
         ProviderName.LOCAL_LLM: LocalLLMProvider(p.local_llm_base_url, p.local_llm_model),
+        ProviderName.GEMINI: GeminiProvider(
+            p.gemini_api_key,
+            QuotaTracker(ProviderName.GEMINI, p.gemini_weekly_token_budget),
+            model=p.gemini_model,
+        ),
+        ProviderName.DEEPSEEK: DeepSeekProvider(
+            p.deepseek_api_key,
+            QuotaTracker(ProviderName.DEEPSEEK, p.deepseek_weekly_token_budget),
+            model=p.deepseek_model,
+        ),
+        ProviderName.GROK: GrokProvider(
+            p.grok_api_key,
+            QuotaTracker(ProviderName.GROK, p.grok_weekly_token_budget),
+            model=p.grok_model,
+        ),
+        ProviderName.GROQ: GroqProvider(
+            p.groq_api_key,
+            QuotaTracker(ProviderName.GROQ, p.groq_weekly_token_budget),
+            model=p.groq_model,
+        ),
+        ProviderName.MISTRAL: MistralProvider(
+            p.mistral_api_key,
+            QuotaTracker(ProviderName.MISTRAL, p.mistral_weekly_token_budget),
+            model=p.mistral_model,
+        ),
+        ProviderName.OPENROUTER: OpenRouterProvider(
+            p.openrouter_api_key,
+            QuotaTracker(ProviderName.OPENROUTER, p.openrouter_weekly_token_budget),
+            model=p.openrouter_model,
+        ),
     }
 
 

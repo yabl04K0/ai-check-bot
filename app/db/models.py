@@ -61,6 +61,12 @@ class ProviderName(str, enum.Enum):
     CODEX = "codex"
     CURSOR = "cursor"
     LOCAL_LLM = "local_llm"
+    GEMINI = "gemini"
+    DEEPSEEK = "deepseek"
+    GROK = "grok"
+    GROQ = "groq"
+    MISTRAL = "mistral"
+    OPENROUTER = "openrouter"
 
 
 class ProviderMode(str, enum.Enum):

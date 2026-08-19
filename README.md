@@ -213,6 +213,25 @@ HTTPS-remote; для SSH-remote (`git@github.com:...`) эта аутентифи
 ставится только когда предыдущая реально завершилась (DONE/ERROR/
 CANCELLED).
 
+Добавлено 6 новых ИИ-провайдеров: Gemini, DeepSeek, Grok (xAI), Groq,
+Mistral, OpenRouter. Все они говорят одним и тем же OpenAI-совместимым
+Chat Completions контрактом (Bearer-токен + POST `{base_url}/chat/
+completions`) — тем же, что уже использовал Codex и локальная LLM, так
+что вместо копипасты HTTP-логики в 6 файлов вынесен общий базовый класс
+`OpenAICompatibleProvider` (`app/providers/openai_compatible.py`):
+auth_status/run_prompt/estimate_quota/429→`ProviderQuotaExceededError`
+реализованы один раз, конкретный провайдер (`gemini.py`/`deepseek.py`/
+`grok.py`/`groq.py`/`mistral.py`/`openrouter.py`) — это только имя,
+base_url и модель по умолчанию. Каждый заводится в `.env` одинаково:
+`<ИМЯ>_API_KEY` (обязателен), `<ИМЯ>_MODEL` (опциональный override) и
+`<ИМЯ>_WEEKLY_TOKEN_BUDGET` (опциональный, для оценки квоты — как у
+Claude/Codex). Все шесть автоматически появляются в ⚙️ Настройки →
+🔌 Провайдеры ИИ (раздел строится циклом по `registry.all()`, отдельный
+UI-код не нужен) и в `router.DEFAULT_PRIORITY` как хвост фолбэка для
+каждого типа задачи — Groq дополнительно поставлен вторым в приоритете
+для LITE ЧЕК (после локалки) как ещё один быстрый/дешёвый scout за счёт
+LPU-инференса с очень низкой задержкой.
+
 Осознанно не реализовано в этой версии (см. TODO в коде): выполнение
 промптов через Codex CLI (сам логин работает, но запросы всё ещё идут
 только через OpenAI API-ключ — у codex CLI нет стабильного контракта на
@@ -260,6 +279,12 @@ Telegram-бот-диспетчер задач разработки по неск
 | **Codex** (OpenAI) | codex CLI / API | API-ключ или логин в аккаунт ChatGPT |
 | **Cursor** | Cursor Agent CLI (`cursor-agent -p`) | Логин в аккаунт Cursor (уже был как Tier 1 делегирования в старой схеме) |
 | **Локальная LLM** | Qwen2.5-Coder на RTX 3060 через Ollama/vLLM | Без авторизации, локальный endpoint |
+| **Gemini** (Google) | OpenAI-совместимый endpoint | `GEMINI_API_KEY` |
+| **DeepSeek** | OpenAI-совместимый API | `DEEPSEEK_API_KEY` |
+| **Grok** (xAI) | OpenAI-совместимый API | `GROK_API_KEY` |
+| **Groq** | OpenAI-совместимый API, LPU — очень низкая задержка | `GROQ_API_KEY` |
+| **Mistral** | OpenAI-совместимый API | `MISTRAL_API_KEY` |
+| **OpenRouter** | Единый шлюз к десяткам моделей разных вендоров одним ключом | `OPENROUTER_API_KEY` |
 
 ### Управление аккаунтами провайдеров
 

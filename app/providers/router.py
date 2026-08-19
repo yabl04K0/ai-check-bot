@@ -13,16 +13,48 @@ from app.db.models import ProviderName, TaskType
 from app.providers.base import QuotaEstimate
 from app.providers.registry import ProviderRegistry
 
+# Хвост фолбэка, общий почти для всех типов задач: провайдеры, добавленные
+# позже через общий OpenAI-совместимый контракт (см.
+# app.providers.openai_compatible) — не первый выбор ни для одной задачи
+# по умолчанию, но лучше доехать на них, чем не доехать вообще, если
+# основная тройка (Claude/Codex/Cursor) недоступна или на пределе квоты.
+_EXTRA_FALLBACK = [
+    ProviderName.GEMINI,
+    ProviderName.DEEPSEEK,
+    ProviderName.GROK,
+    ProviderName.MISTRAL,
+    ProviderName.OPENROUTER,
+]
+
 # Приоритет провайдеров по умолчанию для каждого типа задачи (первый — предпочтительный).
 # Чек (Full) — штатный флот-протокол заточен под Claude; Lite — легче,
-# локалка как scout вытягивает первой, чтобы экономить платную квоту.
+# локалка и Groq (LPU, очень низкая задержка) как scout вытягивают первыми,
+# чтобы экономить платную квоту тяжёлых провайдеров.
 DEFAULT_PRIORITY: dict[TaskType, list[ProviderName]] = {
-    TaskType.CHECK_FULL: [ProviderName.CLAUDE, ProviderName.CODEX, ProviderName.CURSOR],
-    TaskType.CHECK_LITE: [ProviderName.LOCAL_LLM, ProviderName.CLAUDE, ProviderName.CODEX],
-    TaskType.FEATURE: [ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.CODEX],
-    TaskType.FIX: [ProviderName.CURSOR, ProviderName.CLAUDE, ProviderName.CODEX],
-    TaskType.REFACTOR: [ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.CODEX],
-    TaskType.CUSTOM: [ProviderName.CLAUDE, ProviderName.CODEX, ProviderName.CURSOR, ProviderName.LOCAL_LLM],
+    TaskType.CHECK_FULL: [
+        ProviderName.CLAUDE,
+        ProviderName.CODEX,
+        ProviderName.CURSOR,
+        *_EXTRA_FALLBACK,
+    ],
+    TaskType.CHECK_LITE: [
+        ProviderName.LOCAL_LLM,
+        ProviderName.GROQ,
+        ProviderName.CLAUDE,
+        ProviderName.CODEX,
+        *_EXTRA_FALLBACK,
+    ],
+    TaskType.FEATURE: [ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.CODEX, *_EXTRA_FALLBACK],
+    TaskType.FIX: [ProviderName.CURSOR, ProviderName.CLAUDE, ProviderName.CODEX, *_EXTRA_FALLBACK],
+    TaskType.REFACTOR: [ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.CODEX, *_EXTRA_FALLBACK],
+    TaskType.CUSTOM: [
+        ProviderName.CLAUDE,
+        ProviderName.CODEX,
+        ProviderName.CURSOR,
+        ProviderName.LOCAL_LLM,
+        ProviderName.GROQ,
+        *_EXTRA_FALLBACK,
+    ],
 }
 
 # Порог, выше которого провайдер считается "почти без квоты" и роутер

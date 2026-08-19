@@ -52,6 +52,33 @@ class ProviderSettings:
     anthropic_weekly_token_budget: int | None = None
     openai_weekly_token_budget: int | None = None
 
+    # Доп. провайдеры через общий OpenAI-совместимый контракт (см.
+    # app.providers.openai_compatible) — каждый заводится тут одинаково:
+    # API-ключ, опциональный override модели, опциональный недельный бюджет.
+    gemini_api_key: str | None = None
+    gemini_model: str | None = None
+    gemini_weekly_token_budget: int | None = None
+
+    deepseek_api_key: str | None = None
+    deepseek_model: str | None = None
+    deepseek_weekly_token_budget: int | None = None
+
+    grok_api_key: str | None = None
+    grok_model: str | None = None
+    grok_weekly_token_budget: int | None = None
+
+    groq_api_key: str | None = None
+    groq_model: str | None = None
+    groq_weekly_token_budget: int | None = None
+
+    mistral_api_key: str | None = None
+    mistral_model: str | None = None
+    mistral_weekly_token_budget: int | None = None
+
+    openrouter_api_key: str | None = None
+    openrouter_model: str | None = None
+    openrouter_weekly_token_budget: int | None = None
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -95,6 +122,24 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
             local_llm_model=os.getenv("LOCAL_LLM_MODEL", "qwen2.5-coder:14b"),
             anthropic_weekly_token_budget=_int(os.getenv("ANTHROPIC_WEEKLY_TOKEN_BUDGET"), 0) or None,
             openai_weekly_token_budget=_int(os.getenv("OPENAI_WEEKLY_TOKEN_BUDGET"), 0) or None,
+            gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
+            gemini_model=os.getenv("GEMINI_MODEL") or None,
+            gemini_weekly_token_budget=_int(os.getenv("GEMINI_WEEKLY_TOKEN_BUDGET"), 0) or None,
+            deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
+            deepseek_model=os.getenv("DEEPSEEK_MODEL") or None,
+            deepseek_weekly_token_budget=_int(os.getenv("DEEPSEEK_WEEKLY_TOKEN_BUDGET"), 0) or None,
+            grok_api_key=os.getenv("GROK_API_KEY") or None,
+            grok_model=os.getenv("GROK_MODEL") or None,
+            grok_weekly_token_budget=_int(os.getenv("GROK_WEEKLY_TOKEN_BUDGET"), 0) or None,
+            groq_api_key=os.getenv("GROQ_API_KEY") or None,
+            groq_model=os.getenv("GROQ_MODEL") or None,
+            groq_weekly_token_budget=_int(os.getenv("GROQ_WEEKLY_TOKEN_BUDGET"), 0) or None,
+            mistral_api_key=os.getenv("MISTRAL_API_KEY") or None,
+            mistral_model=os.getenv("MISTRAL_MODEL") or None,
+            mistral_weekly_token_budget=_int(os.getenv("MISTRAL_WEEKLY_TOKEN_BUDGET"), 0) or None,
+            openrouter_api_key=os.getenv("OPENROUTER_API_KEY") or None,
+            openrouter_model=os.getenv("OPENROUTER_MODEL") or None,
+            openrouter_weekly_token_budget=_int(os.getenv("OPENROUTER_WEEKLY_TOKEN_BUDGET"), 0) or None,
         ),
         github_token=os.getenv("GITHUB_TOKEN") or None,
         autocheck=AutocheckSettings(
