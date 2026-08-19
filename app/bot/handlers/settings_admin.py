@@ -6,7 +6,8 @@ import asyncio
 
 from sqlalchemy import func, select
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, ContextTypes
+from telegram.error import TelegramError
+from telegram.ext import Application, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from app.bot.keyboards import back_button
 from app.db.models import HistoryEntry, Job, JobStatus, Project, ProviderAccountStatus, ProviderName, User
@@ -14,6 +15,8 @@ from app.db.session import get_session
 from app.logging_setup import log_action
 from app.providers.base import ProviderError
 from app.providers.registry import ProviderRegistry
+from app.scheduler.decision import decide_autocheck_action
+from app.tasks.types import TASK_TYPE_LABELS
 
 
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -171,12 +174,15 @@ async def show_history_for_project(update: Update, context: ContextTypes.DEFAULT
     await query.edit_message_text("\n".join(lines), reply_markup=back_button("menu:history"))
 
 
+def _is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    settings = context.application.bot_data["settings"]
+    return bool(settings.admin_tg_id and update.effective_user.id == settings.admin_tg_id)
+
+
 async def show_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    settings = context.application.bot_data["settings"]
-    is_admin = bool(settings.admin_tg_id and update.effective_user.id == settings.admin_tg_id)
-    if not is_admin:
+    if not _is_admin(update, context):
         await query.edit_message_text("Доступно только администратору.", reply_markup=back_button())
         return
 
@@ -193,10 +199,84 @@ async def show_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"👥 Пользователей: {users_count}",
         f"📊 Задач выполнено всего: {jobs_this_week}",
         "По провайдерам: " + ", ".join(f"{p.value if p else '?'}={c}" for p, c in by_provider) or "—",
-        "📢 Рассылка: TODO",
-        "🧪 Тестовый прогон (dry-run): TODO",
     ]
+    rows = [
+        [InlineKeyboardButton("📢 Рассылка", callback_data="admin:broadcast")],
+        [InlineKeyboardButton("🧪 Тестовый прогон (dry-run)", callback_data="admin:dry_run")],
+        [back_button()],
+    ]
+    await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def dry_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает, что сделала бы автопроверка по квоте ПРЯМО СЕЙЧАС, не
+    ставя ничего в очередь — та же decide_autocheck_action, что и
+    настоящий тик планировщика (см. app/scheduler/autocheck.py)."""
+    query = update.callback_query
+    await query.answer()
+    if not _is_admin(update, context):
+        await query.edit_message_text("Доступно только администратору.", reply_markup=back_button())
+        return
+
+    settings = context.application.bot_data["settings"]
+    enabled = context.application.bot_data.get("autocheck_enabled_override", settings.autocheck.enabled)
+    registry: ProviderRegistry = context.application.bot_data["provider_registry"]
+    decision = decide_autocheck_action(settings.autocheck, enabled=enabled, registry=registry)
+
+    lines = ["🧪 Dry-run автопроверки", f"Решение: {decision.reason}"]
+    if decision.would_run:
+        with get_session() as session:
+            projects = session.scalars(select(Project).where(Project.autocheck_enabled.is_(True))).all()
+        label = TASK_TYPE_LABELS.get(decision.task_type, decision.task_type)
+        if not projects:
+            lines.append(f"Тип: {label} — но нет проектов с включённым авточеком, по факту не запустится.")
+        else:
+            names = ", ".join(p.name for p in projects)
+            lines.append(f"Запустился бы {label} на: {names}")
+    else:
+        lines.append("Ничего не запустится.")
+
     await query.edit_message_text("\n".join(lines), reply_markup=back_button())
+
+
+async def prompt_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    if not _is_admin(update, context):
+        await query.edit_message_text("Доступно только администратору.", reply_markup=back_button())
+        return
+    context.user_data["awaiting"] = "broadcast"
+    await query.edit_message_text(
+        "📢 Отправь текст рассылки — уйдёт всем известным пользователям бота.",
+        reply_markup=back_button(),
+    )
+
+
+async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if context.user_data.get("awaiting") != "broadcast":
+        return
+    context.user_data["awaiting"] = None
+    if not _is_admin(update, context):
+        return  # флаг мог остаться от другого юзера, если он был сброшен странно — не рассылаем без прав
+
+    text = update.message.text.strip()
+    if not text:
+        await update.message.reply_text("Пустой текст, рассылка не отправлена.")
+        return
+
+    with get_session() as session:
+        tg_ids = session.scalars(select(User.tg_id)).all()
+
+    sent = failed = 0
+    for tg_id in tg_ids:
+        try:
+            await context.bot.send_message(tg_id, f"📢 {text}")
+            sent += 1
+        except TelegramError:
+            failed += 1
+
+    log_action(str(update.effective_user.id), "broadcast", f"sent={sent} failed={failed}")
+    await update.message.reply_text(f"✅ Рассылка отправлена: {sent} успешно, {failed} не удалось.")
 
 
 def register(application: Application) -> None:
@@ -209,3 +289,6 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(show_history_projects, pattern=r"^menu:history$"))
     application.add_handler(CallbackQueryHandler(show_history_for_project, pattern=r"^hist:proj:\d+$"))
     application.add_handler(CallbackQueryHandler(show_admin, pattern=r"^menu:admin$"))
+    application.add_handler(CallbackQueryHandler(dry_run, pattern=r"^admin:dry_run$"))
+    application.add_handler(CallbackQueryHandler(prompt_broadcast, pattern=r"^admin:broadcast$"))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text), group=2)

@@ -19,9 +19,10 @@ from sqlalchemy import select
 from telegram.ext import Application
 
 from app.bot.job_runner import start_job
-from app.db.models import Job, JobStatus, Project, ProviderMode, TaskType
+from app.db.models import Job, JobStatus, Project, ProviderMode
 from app.db.session import get_session
 from app.providers.registry import ProviderRegistry
+from app.scheduler.decision import decide_autocheck_action
 from app.tasks.queue import JobQueue
 
 logger = logging.getLogger(__name__)
@@ -33,32 +34,12 @@ RESUME_INTERVAL_MINUTES = 5
 async def _tick(application: Application) -> None:
     settings = application.bot_data["settings"]
     enabled = application.bot_data.get("autocheck_enabled_override", settings.autocheck.enabled)
-    if not enabled:
-        return
-
     registry: ProviderRegistry = application.bot_data["provider_registry"]
-    connected = registry.connected()
-    if not connected:
+
+    decision = decide_autocheck_action(settings.autocheck, enabled=enabled, registry=registry)
+    if not decision.would_run:
         return
-
-    estimates = [registry.get(name).estimate_quota() for name in connected]
-    used_values = [e.used_pct for e in estimates if e.used_pct is not None]
-    if not used_values:
-        return  # ни у одного подключенного провайдера нет оценки — ждём
-    worst_used = max(used_values)
-
-    task_type: TaskType | None = None
-    if worst_used >= (100 - settings.autocheck.full_threshold_pct):
-        task_type = TaskType.CHECK_FULL
-    else:
-        hours_values = [e.hours_to_reset for e in estimates if e.hours_to_reset is not None]
-        soon_reset = any(h < settings.autocheck.lite_hours_before_reset for h in hours_values)
-        under_lite_cap = worst_used < settings.autocheck.lite_threshold_pct
-        if soon_reset and under_lite_cap:
-            task_type = TaskType.CHECK_LITE
-
-    if task_type is None:
-        return
+    task_type = decision.task_type
 
     with get_session() as session:
         projects = session.scalars(select(Project).where(Project.autocheck_enabled.is_(True))).all()
