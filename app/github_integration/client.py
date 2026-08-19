@@ -29,6 +29,12 @@ class RepoStatus:
     open_issues: int
 
 
+@dataclass(frozen=True)
+class BatchCloseResult:
+    closed: list[str]
+    failed: list[tuple[str, str]]  # (repo_full_name, текст ошибки)
+
+
 class GitHubClient:
     """Единственная точка входа к GitHub API в проекте."""
 
@@ -68,14 +74,24 @@ class GitHubClient:
             open_issues=repo.open_issues_count,
         )
 
-    def close_all_public(self) -> list[str]:
-        """⚡ Закрыть все публичные — батч-операция из меню GitHub."""
+    def close_all_public(self) -> BatchCloseResult:
+        """⚡ Закрыть все публичные — батч-операция из меню GitHub.
+
+        Одна упавшая репа (rate limit, специфичные права именно на неё)
+        не должна обрывать всю операцию и терять то, что уже успело
+        закрыться — поэтому продолжаем и репортим оба списка, а не
+        падаем с первой же ошибкой."""
         closed = []
+        failed = []
         for status in self.list_repos():
-            if not status.private:
+            if status.private:
+                continue
+            try:
                 self.set_visibility(status.full_name, private=True)
                 closed.append(status.full_name)
-        return closed
+            except GitHubError as exc:
+                failed.append((status.full_name, str(exc)))
+        return BatchCloseResult(closed=closed, failed=failed)
 
     def list_issues(self, repo_full_name: str, *, state: str = "open") -> list[dict]:
         try:

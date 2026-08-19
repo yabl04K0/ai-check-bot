@@ -182,13 +182,26 @@ async def close_public(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await query.edit_message_text("GitHub-токен не задан.", reply_markup=back_button())
         return
     try:
-        closed = client.close_all_public()
+        result = client.close_all_public()
     except GitHubError as exc:
         await query.edit_message_text(f"Ошибка: {exc}", reply_markup=back_button("menu:github"))
         return
-    log_action(str(update.effective_user.id), "github_close_all_public", ", ".join(closed))
-    text = f"✅ Закрыто: {len(closed)}\n" + "\n".join(closed) if closed else "Публичных репозиториев не было."
-    await query.edit_message_text(text, reply_markup=back_button("menu:github"))
+
+    log_action(
+        str(update.effective_user.id),
+        "github_close_all_public",
+        f"closed={result.closed} failed={[name for name, _ in result.failed]}",
+    )
+
+    if not result.closed and not result.failed:
+        text = "Публичных репозиториев не было."
+    else:
+        lines = [f"✅ Закрыто: {len(result.closed)}"] + result.closed
+        if result.failed:
+            lines.append(f"\n❌ Не удалось: {len(result.failed)}")
+            lines.extend(f"{name}: {error}" for name, error in result.failed)
+        text = "\n".join(lines)
+    await query.edit_message_text(text[:4000], reply_markup=back_button("menu:github"))
 
 
 def register(application: Application) -> None:

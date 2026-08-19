@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from github.GithubException import GithubException
 
 from app.github_integration.client import GitHubClient, GitHubError
 
@@ -57,10 +58,35 @@ def test_close_all_public_only_touches_public_repos():
     # set_visibility делает повторный get_repo — вернём приватную версию репо
     fake_gh.get_repo.return_value = _fake_repo("me/pub1", private=True)
 
-    closed = client.close_all_public()
+    result = client.close_all_public()
 
-    assert closed == ["me/pub1", "me/pub2"]
+    assert result.closed == ["me/pub1", "me/pub2"]
+    assert result.failed == []
     assert fake_gh.get_repo.call_count == 4  # edit+refetch, x2 репо
+
+
+def test_close_all_public_continues_after_one_repo_fails():
+    """Одна упавшая репа не должна терять то, что уже успело закрыться —
+    раньше исключение из set_visibility обрывало весь батч и второй репо
+    не закрывался вообще, хотя мог бы."""
+    client, fake_gh = _client_with_fake_gh()
+    fake_gh.get_user.return_value.get_repos.return_value = [
+        _fake_repo("me/breaks", private=False),
+        _fake_repo("me/ok", private=False),
+    ]
+
+    def get_repo_side_effect(name):
+        if name == "me/breaks":
+            raise GithubException(403, {"message": "forbidden"}, None)
+        return _fake_repo("me/ok", private=True)
+
+    fake_gh.get_repo.side_effect = get_repo_side_effect
+
+    result = client.close_all_public()
+
+    assert result.closed == ["me/ok"]
+    assert len(result.failed) == 1
+    assert result.failed[0][0] == "me/breaks"
 
 
 def test_list_issues_excludes_pull_requests():
