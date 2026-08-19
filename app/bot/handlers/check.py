@@ -21,9 +21,12 @@ from app.bot.keyboards import (
     project_multiselect,
     scope_menu,
 )
-from app.db.models import Job, Project, ProviderMode, TaskType
+from app.db.models import HistoryEntry, Job, Project, ProviderMode, TaskType
 from app.db.session import get_session
+from app.github_integration.client import GitHubClient, GitHubError
+from app.logging_setup import log_action
 from app.registry_store.store import move_finding
+from app.tasks.patch_apply import apply_patch, commit_all, current_commit_sha
 from app.tasks.project_context import local_path as project_local_path
 from app.tasks.queue import JobQueue
 from app.tasks.types import REQUIRES_DESCRIPTION, TASK_TYPE_LABELS
@@ -338,9 +341,8 @@ async def commit_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     job_id = int(query.data.split(":")[-1])
     with get_session() as session:
         job = session.get(Job, job_id)
-        report = job.report_text or ""
-    diff_present = "Патч:" in report or "Финальный фикс:" in report
-    hint = "" if diff_present else "\n(патч в отчёте не найден)"
+        has_patch = bool(job.patch_text and job.patch_text.strip())
+    hint = "" if has_patch else "\n(патч не сгенерирован — нечего применять)"
     await query.edit_message_text(
         f"💾 Зафиксить и запушить?{hint}", reply_markup=commit_confirm_menu(job_id)
     )
@@ -358,20 +360,82 @@ async def commit_no(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await query.edit_message_text(f"Отчёт #{job_id}", reply_markup=report_menu(job_id, is_check=is_check))
 
 
+def _apply_and_commit_blocking(job_id: int, github_token: str | None) -> str:
+    """Блокирующая часть (git apply/commit/push) — выполняется в отдельном
+    потоке через asyncio.to_thread, чтобы не подвешивать event loop бота.
+    Возвращает готовый текст сообщения для пользователя."""
+    with get_session() as session:
+        job = session.get(Job, job_id)
+        if job is None:
+            return "Задача не найдена."
+        patch_text = job.patch_text
+        projects = list(job.projects)
+        task_type = job.task_type
+        comment = job.comment
+
+        if not patch_text or not patch_text.strip():
+            return f"⚠️ Патч для #{job_id} пуст — нечего применять."
+
+        target = next((p for p in projects if project_local_path(p)), None)
+        if target is None:
+            return (
+                "Ни у одного проекта из задачи не задан local_path (локальный "
+                "чекаут) — применить патч некуда."
+            )
+        path = project_local_path(target)
+
+        ok, apply_detail = apply_patch(path, patch_text)
+        if not ok:
+            return f"❌ Не удалось применить патч в {target.name}:\n{apply_detail[:1500]}"
+
+        commit_message = f"{TASK_TYPE_LABELS.get(task_type, task_type.value)}: {(comment or 'изменения от ai-check-bot')[:72]}"
+        ok, commit_detail = commit_all(path, commit_message)
+        if not ok:
+            return f"⚠️ Патч применён в {target.name}, но commit не удался:\n{commit_detail[:1500]}"
+
+        log_action(str(job.created_by_tg_id or "system"), "commit_applied", f"job #{job_id} project={target.name}")
+
+        sha = current_commit_sha(path)
+        commit_url = f"https://github.com/{target.repo_full_name}/commit/{sha}" if sha else None
+        history_entry = session.scalar(
+            select(HistoryEntry)
+            .where(HistoryEntry.job_id == job_id, HistoryEntry.project_id == target.id)
+            .order_by(HistoryEntry.created_at.desc())
+        )
+        if history_entry is not None and commit_url:
+            history_entry.commit_url = commit_url
+        session.commit()
+
+        push_note = ""
+        if target.is_self:
+            push_note = (
+                "\n\n⚠️ self-check: пуш НЕ выполняется автоматически, даже если "
+                "автопуш разрешён для других проектов — запушь вручную через 🐙 GitHub."
+            )
+        elif target.autopush_enabled:
+            if not github_token:
+                push_note = "\n\n(автопуш включён для проекта, но GITHUB_TOKEN не задан)"
+            else:
+                try:
+                    client = GitHubClient(github_token)
+                    push_result = client.push_commit(path)
+                    push_note = f"\n\n✅ Запушено: {push_result or 'ok'}"
+                    log_action(str(job.created_by_tg_id or "system"), "commit_pushed", target.repo_full_name)
+                except GitHubError as exc:
+                    push_note = f"\n\n⚠️ Коммит создан, но push не удался: {exc}"
+
+        return f"✅ Закоммичено в {target.name}{f' ({commit_url})' if commit_url else ''}.{push_note}"
+
+
 async def commit_yes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Пайплайн генерирует ТОЛЬКО текст патча (см. app/tasks/generic.py) —
-    автоприменение диффа на диск и git commit сознательно не реализованы в
-    этой версии (риск непроверенного patch-applier на реальном репо).
-    Честно говорим об этом вместо фейкового 'закоммичено'."""
     query = update.callback_query
     await query.answer()
     job_id = int(query.data.split(":")[-1])
-    await query.edit_message_text(
-        f"⚠️ Автоприменение патча + коммит для #{job_id} пока не реализовано.\n"
-        "Возьми диф из 🔍 Детали и примени/закоммить вручную (или через `git apply`), "
-        "затем запушь через 🐙 GitHub.",
-        reply_markup=back_button(),
-    )
+    await query.edit_message_text(f"⏳ Применяю патч и коммичу для #{job_id}…")
+
+    settings = context.application.bot_data["settings"]
+    text = await asyncio.to_thread(_apply_and_commit_blocking, job_id, settings.github_token)
+    await context.bot.send_message(update.effective_chat.id, text[:4000], reply_markup=back_button())
 
 
 async def commit_show_diff(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -380,7 +444,7 @@ async def commit_show_diff(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     job_id = int(query.data.split(":")[-1])
     with get_session() as session:
         job = session.get(Job, job_id)
-        text = job.report_text or "(пусто)"
+        text = job.patch_text or job.report_text or "(пусто)"
     for i in range(0, len(text), 3800):
         await context.bot.send_message(update.effective_chat.id, text[i : i + 3800])
 

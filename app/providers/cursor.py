@@ -14,11 +14,13 @@ from app.db.models import ProviderAccountStatus, ProviderName
 from app.providers.base import (
     AIProvider,
     AuthStatus,
+    LoginResult,
     ProviderError,
     ProviderNotAuthenticatedError,
     ProviderResult,
     RunOptions,
 )
+from app.providers.cli_login import run_cli_login
 
 
 class CursorProvider(AIProvider):
@@ -61,3 +63,12 @@ class CursorProvider(AIProvider):
             raise ProviderError(f"cursor-agent завершился с кодом {result.returncode}: {result.stderr.strip()}")
 
         return ProviderResult(text=result.stdout.strip(), model="cursor-agent", raw=result)
+
+    def supports_login(self) -> bool:
+        return bool(self._cli_path)
+
+    def login(self) -> LoginResult:
+        return run_cli_login(
+            self._cli_path,
+            missing_path_hint="CURSOR_AGENT_CLI_PATH не задан в .env — некуда запускать login.",
+        )

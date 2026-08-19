@@ -100,6 +100,7 @@ class Pipeline:
             ctx.session.commit()
 
         ctx.job.report_text = ctx.state.get("final_report")
+        ctx.job.patch_text = ctx.state.get("patch")
         queue.mark_done(ctx.job)
         ctx.session.commit()
         return ctx

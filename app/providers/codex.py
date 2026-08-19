@@ -1,4 +1,13 @@
-"""Codex (OpenAI) — API-ключ или логин в аккаунт ChatGPT (CLI, TODO)."""
+"""Codex (OpenAI) — API-ключ ИЛИ CLI-логин в аккаунт ChatGPT.
+
+Выполнение промптов (run_prompt) пока работает только через API-ключ —
+Chat Completions API напрямую через httpx. Неинтерактивный вызов
+реального `codex` CLI под конкретный промпт (без API-ключа, через
+ChatGPT-логин) не реализован: у codex CLI нет стабильного публичного
+контракта на non-interactive exec, который можно было бы захардкодить
+не рискуя сломаться на следующей версии CLI — см. TODO. login() при этом
+УЖЕ реален: кнопка "Войти" в боте прогоняет `<CODEX_CLI_PATH> login`.
+"""
 
 from __future__ import annotations
 
@@ -8,11 +17,13 @@ from app.db.models import ProviderAccountStatus, ProviderName
 from app.providers.base import (
     AIProvider,
     AuthStatus,
+    LoginResult,
     ProviderError,
     ProviderNotAuthenticatedError,
     ProviderResult,
     RunOptions,
 )
+from app.providers.cli_login import run_cli_login
 from app.providers.quota import QuotaTracker
 
 DEFAULT_MODEL = "gpt-4.1"
@@ -20,22 +31,41 @@ CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 
 
 class CodexProvider(AIProvider):
-    """Вызывает OpenAI Chat Completions API напрямую через httpx.
-
-    Логин через сам codex CLI / ChatGPT-аккаунт (Tier из README) — не
-    реализован, это TODO: сейчас поддерживается только режим API-ключа.
-    """
+    """Вызывает OpenAI Chat Completions API напрямую через httpx."""
 
     name = ProviderName.CODEX
 
-    def __init__(self, api_key: str | None, quota_tracker: QuotaTracker | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str | None,
+        quota_tracker: QuotaTracker | None = None,
+        cli_path: str | None = None,
+    ) -> None:
         self._api_key = api_key
+        self._cli_path = cli_path
         self._quota_tracker = quota_tracker or QuotaTracker(ProviderName.CODEX)
 
     def auth_status(self) -> AuthStatus:
         if self._api_key:
             return AuthStatus(status=ProviderAccountStatus.CONNECTED)
+        if self._cli_path:
+            # Реальный статус CLI-логина не проверяем автоматически (нет
+            # надёжной non-interactive команды статуса, см. модульный
+            # докстринг) — только сообщаем, что CLI настроен.
+            return AuthStatus(
+                status=ProviderAccountStatus.NOT_CONNECTED,
+                detail="CLI настроен, но статус логина не проверяется автоматически — нажми «Войти»",
+            )
         return AuthStatus(status=ProviderAccountStatus.NOT_CONNECTED, detail="OPENAI_API_KEY не задан")
+
+    def supports_login(self) -> bool:
+        return bool(self._cli_path)
+
+    def login(self) -> LoginResult:
+        return run_cli_login(
+            self._cli_path,
+            missing_path_hint="CODEX_CLI_PATH не задан в .env — некуда запускать login.",
+        )
 
     def run_prompt(self, prompt: str, options: RunOptions | None = None) -> ProviderResult:
         if not self._api_key:

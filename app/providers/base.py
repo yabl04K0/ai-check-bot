@@ -50,6 +50,20 @@ class AuthStatus:
     detail: str | None = None
 
 
+@dataclass(frozen=True)
+class LoginResult:
+    """Результат попытки логина через сам бот (раздел 🔌 Провайдеры ИИ).
+
+    success=True не всегда значит "уже подключен" — для CLI/OAuth-логина
+    (Cursor/Codex) команда обычно печатает URL/код устройства и ждёт, пока
+    человек авторизуется в браузере; в этом случае success=False, а message
+    содержит инструкцию, и статус реально обновится только при следующей
+    проверке auth_status()."""
+
+    success: bool
+    message: str
+
+
 @dataclass
 class RunOptions:
     model: str | None = None
@@ -79,6 +93,19 @@ class AIProvider(ABC):
         """По умолчанию — нет данных. Провайдеры с логируемым расходом
         (Claude/Codex) переопределяют на основе QuotaUsageLog."""
         return QuotaEstimate(used_pct=None, hours_to_reset=None)
+
+    def supports_login(self) -> bool:
+        """Показывать ли кнопку "Войти" в Настройках → 🔌 Провайдеры ИИ."""
+        return False
+
+    def login(self) -> LoginResult:
+        """CLI/OAuth-логин, инициированный из бота (Cursor/Codex). По
+        умолчанию не поддерживается — провайдеры на чистом API-ключе
+        логинятся через .env, не через бота."""
+        raise ProviderError(
+            "Логин через бота не поддерживается для этого провайдера — "
+            "настрой доступ через .env (см. .env.example)."
+        )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<{self.__class__.__name__} name={self.name}>"

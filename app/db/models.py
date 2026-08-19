@@ -145,6 +145,9 @@ class Job(Base):
     # Финальный отчёт пайплайна (ctx.state["final_report"]) — заполняется
     # движком при успешном завершении, см. app.tasks.pipeline.Pipeline.run
     report_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Чистый unified-diff (ctx.state["patch"]) отдельно от читаемого отчёта
+    # — нужен программе для git apply, а не только человеку для чтения.
+    patch_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_by_tg_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

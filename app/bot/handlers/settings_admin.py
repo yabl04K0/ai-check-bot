@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from sqlalchemy import func, select
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 
 from app.bot.keyboards import back_button
-from app.db.models import HistoryEntry, Job, JobStatus, Project, User
+from app.db.models import HistoryEntry, Job, JobStatus, Project, ProviderAccountStatus, ProviderName, User
 from app.db.session import get_session
+from app.logging_setup import log_action
+from app.providers.base import ProviderError
 from app.providers.registry import ProviderRegistry
 
 
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    await query.edit_message_text(*_settings_view(context))
+
+
+def _settings_view(context: ContextTypes.DEFAULT_TYPE) -> tuple[str, InlineKeyboardMarkup]:
     settings = context.application.bot_data["settings"]
     autocheck_on = context.application.bot_data.get("autocheck_enabled_override", settings.autocheck.enabled)
     registry: ProviderRegistry = context.application.bot_data["provider_registry"]
@@ -26,18 +34,24 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "",
         "🔌 Провайдеры ИИ:",
     ]
+    login_rows = []
     for name, provider in registry.all().items():
         status = provider.auth_status()
         lines.append(f"  {name.value}: {status.status.value}" + (f" ({status.detail})" if status.detail else ""))
+        if provider.supports_login() and status.status != ProviderAccountStatus.CONNECTED:
+            login_rows.append(
+                [InlineKeyboardButton(f"🔑 Войти: {name.value}", callback_data=f"set:login:{name.value}")]
+            )
 
     rows = [
         [InlineKeyboardButton(
             f"🔔 Авточек: {'выключить' if autocheck_on else 'включить'}",
             callback_data="set:toggle_autocheck",
         )],
+        *login_rows,
         [back_button()],
     ]
-    await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(rows))
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 
 async def toggle_autocheck_global(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -46,7 +60,25 @@ async def toggle_autocheck_global(update: Update, context: ContextTypes.DEFAULT_
     current = context.application.bot_data.get("autocheck_enabled_override", settings.autocheck.enabled)
     context.application.bot_data["autocheck_enabled_override"] = not current
     await query.answer("Ок")
-    await show_settings(update, context)
+    await query.edit_message_text(*_settings_view(context))
+
+
+async def login_provider(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer("Запускаю логин…")
+    provider_name = ProviderName(query.data.split(":")[-1])
+    registry: ProviderRegistry = context.application.bot_data["provider_registry"]
+    provider = registry.get(provider_name)
+
+    try:
+        result = await asyncio.to_thread(provider.login)
+        text = ("✅ " if result.success else "ℹ️ ") + result.message
+    except ProviderError as exc:
+        text = f"❌ {exc}"
+
+    log_action(str(update.effective_user.id), "provider_login_attempt", f"{provider_name.value}: {text[:200]}")
+    await context.bot.send_message(update.effective_chat.id, text[:4000])
+    await query.edit_message_text(*_settings_view(context))
 
 
 async def show_history_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -119,6 +151,7 @@ async def show_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(show_settings, pattern=r"^menu:settings$"))
     application.add_handler(CallbackQueryHandler(toggle_autocheck_global, pattern=r"^set:toggle_autocheck$"))
+    application.add_handler(CallbackQueryHandler(login_provider, pattern=r"^set:login:\w+$"))
     application.add_handler(CallbackQueryHandler(show_history_projects, pattern=r"^menu:history$"))
     application.add_handler(CallbackQueryHandler(show_history_for_project, pattern=r"^hist:proj:\d+$"))
     application.add_handler(CallbackQueryHandler(show_admin, pattern=r"^menu:admin$"))

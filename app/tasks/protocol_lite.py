@@ -52,10 +52,17 @@ class LiteStep3Fixer(Step):
         scout_report = ctx.state.get("scout_report", "")
         if not wants_fix or not scout_report.strip():
             ctx.state["fix_proposal"] = None
+            ctx.state["patch"] = None
             return
-        prompt = f"На основе находок предложи фикс (текст патча):\n{scout_report}"
-        result = ctx.provider.run_prompt(prompt, RunOptions(system="Ты — fixer в Lite-режиме."))
+        prompt = (
+            f"На основе находок предложи фикс:\n{scout_report}\n\n"
+            "Ответь СТРОГО в формате unified diff (`git diff`: заголовки "
+            "`--- a/путь` / `+++ b/путь`, ханки `@@`), без markdown-разметки "
+            "и пояснений — на подтверждении в боте это идёт прямо в `git apply`."
+        )
+        result = ctx.provider.run_prompt(prompt, RunOptions(system="Ты — fixer в Lite-режиме, пишешь unified diff."))
         ctx.state["fix_proposal"] = result.text
+        ctx.state["patch"] = result.text
 
 
 class LiteStep4Report(Step):

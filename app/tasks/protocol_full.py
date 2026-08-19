@@ -227,6 +227,12 @@ class Step13HumanConfirm(Step):
     label = "13. Human confirm + commit (агент не коммитит сам)"
 
     def run(self, ctx: StepContext) -> None:
+        # Итоговый патч для job.patch_text — в этом пайплайне это скорее
+        # справочный текст (fixer мог смешать несколько находок + пояснения
+        # в прозе), чем гарантированно применимый diff. Реально применяемый
+        # патч под одну задачу получается через "Фикс всё/выборочно" →
+        # отдельный FIX-job на generic-пайплайне (см. app/tasks/generic.py).
+        ctx.state["patch"] = ctx.state.get("fix_proposal")
         ctx.state["final_report"] = (
             f"Домены: {', '.join(ctx.state.get('domains', []))}\n"
             f"Раундов конвергенции: {ctx.state.get('convergence_rounds', 0)}"

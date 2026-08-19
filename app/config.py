@@ -43,6 +43,7 @@ class ProviderSettings:
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
     cursor_agent_cli_path: str | None = None
+    codex_cli_path: str | None = None
     local_llm_base_url: str = "http://localhost:11434/v1"
     local_llm_model: str = "qwen2.5-coder:14b"
     # Недельный бюджет токенов для оценки квоты автопроверки (см.
@@ -89,6 +90,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             cursor_agent_cli_path=os.getenv("CURSOR_AGENT_CLI_PATH") or None,
+            codex_cli_path=os.getenv("CODEX_CLI_PATH") or None,
             local_llm_base_url=os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1"),
             local_llm_model=os.getenv("LOCAL_LLM_MODEL", "qwen2.5-coder:14b"),
             anthropic_weekly_token_budget=_int(os.getenv("ANTHROPIC_WEEKLY_TOKEN_BUDGET"), 0) or None,

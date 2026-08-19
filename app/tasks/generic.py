@@ -45,11 +45,16 @@ class GenericStep2Implement(Step):
         prompt = (
             f"План:\n{ctx.state.get('plan', '')}\n\n"
             f"Исходная задача: {ctx.comment}\n\n"
-            "Сгенерируй патч (diff-текст) реализующий план. Патч НЕ применяется "
-            "на диск автоматически — только текст для показа пользователю "
-            "перед коммитом (human-in-the-loop, см. README)."
+            "Сгенерируй патч, реализующий план, СТРОГО в формате unified diff "
+            "(как `git diff`: заголовки `--- a/путь` / `+++ b/путь`, ханки `@@`). "
+            "Ответь ТОЛЬКО самим диффом — без markdown-разметки (```), без "
+            "пояснений до или после. Патч не применяется на диск автоматически: "
+            "человек должен нажать подтверждение (human-in-the-loop, см. "
+            "README) — только после этого app.tasks.patch_apply запускает "
+            "`git apply` + `git commit`, поэтому невалидный diff здесь = "
+            "неприменимый патч в боте."
         )
-        result = ctx.provider.run_prompt(prompt, RunOptions(system="Ты — разработчик, пишешь патч."))
+        result = ctx.provider.run_prompt(prompt, RunOptions(system="Ты — разработчик, пишешь unified diff патч."))
         ctx.state["patch"] = result.text
 
 

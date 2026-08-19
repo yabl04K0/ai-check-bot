@@ -19,7 +19,9 @@ def build_providers(settings: Settings) -> dict[ProviderName, AIProvider]:
             p.anthropic_api_key, QuotaTracker(ProviderName.CLAUDE, p.anthropic_weekly_token_budget)
         ),
         ProviderName.CODEX: CodexProvider(
-            p.openai_api_key, QuotaTracker(ProviderName.CODEX, p.openai_weekly_token_budget)
+            p.openai_api_key,
+            QuotaTracker(ProviderName.CODEX, p.openai_weekly_token_budget),
+            cli_path=p.codex_cli_path,
         ),
         ProviderName.CURSOR: CursorProvider(p.cursor_agent_cli_path),
         ProviderName.LOCAL_LLM: LocalLLMProvider(p.local_llm_base_url, p.local_llm_model),
