@@ -22,6 +22,7 @@ from app.db.session import get_session
 from app.logging_setup import log_action
 from app.providers.registry import ProviderRegistry
 from app.providers.router import NoProviderAvailableError, pick_provider
+from app.providers.success_history import compute_success_scores
 from app.registry_store.sync import sync_project_findings
 from app.tasks.factory import build_pipeline
 from app.tasks.pipeline import PipelineInterrupted, StepContext
@@ -98,8 +99,9 @@ def _run_pipeline_blocking(application: Application, job_id: int) -> dict:
         session.commit()
 
         if job.provider is None:
+            success_scores = compute_success_scores(session, job.task_type)
             try:
-                provider_name = pick_provider(job.task_type, registry)
+                provider_name = pick_provider(job.task_type, registry, success_scores=success_scores)
             except NoProviderAvailableError as exc:
                 queue.mark_error(job, str(exc))
                 session.commit()
