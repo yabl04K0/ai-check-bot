@@ -59,6 +59,7 @@ class JobStatus(str, enum.Enum):
     QUEUED = "queued"
     RUNNING = "running"
     PAUSED_QUOTA = "paused_quota"
+    PAUSED_MANUAL = "paused_manual"  # человек нажал ⏸ Пауза, ждёт ▶️ Продолжить
     DONE = "done"
     CANCELLED = "cancelled"
     ERROR = "error"

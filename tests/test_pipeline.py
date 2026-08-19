@@ -89,3 +89,64 @@ def test_pipeline_cancel_requested_stops_early(db):
 
         assert calls == ["a"]
         assert job.status == JobStatus.CANCELLED
+
+
+def test_pipeline_pause_blocks_then_resumes(db, monkeypatch):
+    """Пауза между шагами: job уходит в PAUSED_MANUAL, движок реально
+    блокируется (проверяем, что poll вызывается), затем при снятии флага
+    паузы возвращается в RUNNING и шаг всё-таки выполняется."""
+    monkeypatch.setattr("app.tasks.pipeline.time.sleep", lambda _: None)
+
+    calls: list[str] = []
+    poll_count = {"n": 0}
+
+    def paused_requested() -> bool:
+        poll_count["n"] += 1
+        return poll_count["n"] <= 3  # "снимаем" паузу на 4-й проверке
+
+    with get_session() as session:
+        job = _make_job(session)
+        queue = JobQueue(session)
+        ctx = StepContext(
+            job=job,
+            projects=list(job.projects),
+            provider=None,
+            session=session,
+            paused_requested=paused_requested,
+        )
+        pipeline = Pipeline([RecordingStep("a", calls)])
+
+        pipeline.run(ctx, queue)
+
+        assert calls == ["a"]
+        assert job.status == JobStatus.DONE  # успел доехать до конца после снятия паузы
+        assert poll_count["n"] >= 3
+
+
+def test_pipeline_cancel_while_paused_ends_cancelled(db, monkeypatch):
+    monkeypatch.setattr("app.tasks.pipeline.time.sleep", lambda _: None)
+    calls: list[str] = []
+    state = {"cancelled": False}
+
+    def paused_requested() -> bool:
+        state["cancelled"] = True  # на первой же проверке паузы решаем отменить
+        return True
+
+    with get_session() as session:
+        job = _make_job(session)
+        queue = JobQueue(session)
+        ctx = StepContext(
+            job=job,
+            projects=list(job.projects),
+            provider=None,
+            session=session,
+            paused_requested=paused_requested,
+            cancel_requested=lambda: state["cancelled"],
+        )
+        pipeline = Pipeline([RecordingStep("a", calls)])
+
+        with pytest.raises(PipelineCancelled):
+            pipeline.run(ctx, queue)
+
+        assert calls == []  # шаг так и не выполнился
+        assert job.status == JobStatus.CANCELLED

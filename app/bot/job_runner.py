@@ -31,6 +31,7 @@ from app.tasks.types import TASK_TYPE_LABELS
 logger = logging.getLogger(__name__)
 
 CANCEL_REQUESTS: set[int] = set()  # job_id-ки, отменённые пользователем
+PAUSE_REQUESTS: set[int] = set()  # job_id-ки, поставленные на ⏸ Паузу
 
 
 async def start_job(application: Application, job_id: int) -> None:
@@ -118,6 +119,7 @@ def _run_pipeline_blocking(application: Application, job_id: int) -> dict:
             comment=job.comment,
             scope=job.scope,
             cancel_requested=lambda: job_id in CANCEL_REQUESTS,
+            paused_requested=lambda: job_id in PAUSE_REQUESTS,
         )
         try:
             pipeline.run(ctx, queue)
@@ -127,6 +129,7 @@ def _run_pipeline_blocking(application: Application, job_id: int) -> dict:
             logger.exception("Job #%s упал с необработанной ошибкой", job_id)
         finally:
             CANCEL_REQUESTS.discard(job_id)
+            PAUSE_REQUESTS.discard(job_id)
 
         if job.status == JobStatus.DONE:
             for project in projects:
@@ -150,21 +153,26 @@ def _run_pipeline_blocking(application: Application, job_id: int) -> dict:
         return dict(ctx.state)
 
 
+_ACTIVE_STATUSES = (JobStatus.RUNNING, JobStatus.PAUSED_MANUAL)
+
+
 async def _progress_loop(application, job_id: int, chat_id: int | None, message) -> None:
     if chat_id is None or message is None:
         return
     last_text = None
+    last_paused = None
     while True:
         await asyncio.sleep(3)
         with get_session() as session:
             job = session.get(Job, job_id)
-            if job is None or job.status != JobStatus.RUNNING:
+            if job is None or job.status not in _ACTIVE_STATUSES:
                 return
+            paused = job.status == JobStatus.PAUSED_MANUAL
             text = render_progress(job)
-        if text != last_text:
+        if text != last_text or paused != last_paused:
             try:
-                await message.edit_text(text, reply_markup=progress_menu(job_id))
-                last_text = text
+                await message.edit_text(text, reply_markup=progress_menu(job_id, paused=paused))
+                last_text, last_paused = text, paused
             except TelegramError:
                 pass
 

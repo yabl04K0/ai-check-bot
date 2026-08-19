@@ -68,3 +68,34 @@ def test_enqueue_missing_project_raises(db):
         queue = JobQueue(session)
         with pytest.raises(ValueError):
             queue.enqueue(TaskType.CHECK_FULL, [999])
+
+
+def test_manual_pause_blocks_queue_like_running(db):
+    with get_session() as session:
+        p1 = _make_project(session, "P1")
+        queue = JobQueue(session)
+        job1 = queue.enqueue(TaskType.CHECK_FULL, [p1])
+        queue.enqueue(TaskType.CHECK_LITE, [p1])
+
+        queue.mark_running(job1)
+        queue.mark_paused_manual(job1)
+        session.commit()
+
+        assert job1.status == JobStatus.PAUSED_MANUAL
+        assert queue.is_busy() is True  # пауза не освобождает слот
+        assert queue.next_queued() is None
+
+
+def test_mark_resumed_goes_back_to_running(db):
+    with get_session() as session:
+        p1 = _make_project(session, "P1")
+        queue = JobQueue(session)
+        job = queue.enqueue(TaskType.CHECK_FULL, [p1])
+        queue.mark_running(job)
+        queue.mark_paused_manual(job)
+        session.commit()
+
+        queue.mark_resumed(job)
+        session.commit()
+
+        assert job.status == JobStatus.RUNNING

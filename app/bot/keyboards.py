@@ -68,9 +68,14 @@ def confirm_menu(task_type: TaskType) -> InlineKeyboardMarkup:
     )
 
 
-def progress_menu(job_id: int) -> InlineKeyboardMarkup:
+def progress_menu(job_id: int, *, paused: bool = False) -> InlineKeyboardMarkup:
+    pause_button = (
+        InlineKeyboardButton("▶️ Продолжить", callback_data=f"job:resume:{job_id}")
+        if paused
+        else InlineKeyboardButton("⏸ Пауза", callback_data=f"job:pause:{job_id}")
+    )
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("✖ Отмена", callback_data=f"job:cancel:{job_id}")]]
+        [[pause_button, InlineKeyboardButton("✖ Отмена", callback_data=f"job:cancel:{job_id}")]]
     )
 
 

@@ -12,7 +12,7 @@ from sqlalchemy import select
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
-from app.bot.job_runner import CANCEL_REQUESTS, start_job
+from app.bot.job_runner import CANCEL_REQUESTS, PAUSE_REQUESTS, start_job
 from app.bot.keyboards import (
     back_button,
     comment_menu,
@@ -21,7 +21,7 @@ from app.bot.keyboards import (
     project_multiselect,
     scope_menu,
 )
-from app.db.models import HistoryEntry, Job, Project, ProviderMode, TaskType
+from app.db.models import HistoryEntry, Job, JobStatus, Project, ProviderMode, TaskType
 from app.db.session import get_session
 from app.github_integration.client import GitHubClient, GitHubError
 from app.logging_setup import log_action
@@ -222,6 +222,27 @@ async def cancel_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     job_id = int(query.data.split(":")[-1])
     CANCEL_REQUESTS.add(job_id)
     await query.answer("Отменяю…")
+
+
+async def pause_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    job_id = int(query.data.split(":")[-1])
+    PAUSE_REQUESTS.add(job_id)
+    # Немедленная обратная связь в UI — пайплайн сам подтвердит статус между
+    # шагами (см. Pipeline._wait_while_paused), текущий шаг не прерывается.
+    with get_session() as session:
+        job = session.get(Job, job_id)
+        if job is not None and job.status == JobStatus.RUNNING:
+            job.status = JobStatus.PAUSED_MANUAL
+            session.commit()
+    await query.answer("⏸ Ставлю на паузу…")
+
+
+async def resume_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    job_id = int(query.data.split(":")[-1])
+    PAUSE_REQUESTS.discard(job_id)
+    await query.answer("▶️ Продолжаю…")
 
 
 async def report_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -471,6 +492,8 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(skip_comment, pattern=r"^chk:comment:skip$"))
     application.add_handler(CallbackQueryHandler(confirm, pattern=r"^chk:confirm$"))
     application.add_handler(CallbackQueryHandler(cancel_job, pattern=r"^job:cancel:\d+$"))
+    application.add_handler(CallbackQueryHandler(pause_job, pattern=r"^job:pause:\d+$"))
+    application.add_handler(CallbackQueryHandler(resume_job, pattern=r"^job:resume:\d+$"))
     application.add_handler(CallbackQueryHandler(report_details, pattern=r"^report:details:\d+$"))
     application.add_handler(CallbackQueryHandler(report_fix_all, pattern=r"^report:fix_all:\d+$"))
     application.add_handler(

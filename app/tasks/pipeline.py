@@ -7,17 +7,19 @@
 
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
 
-from app.db.models import Job, Project
+from app.db.models import Job, JobStatus, Project
 from app.providers.base import AIProvider, ProviderQuotaExceededError
 from app.tasks.queue import JobQueue
 
 ProgressCallback = Callable[[int, str], None]
+PAUSE_POLL_SECONDS = 2
 
 
 class PipelineInterrupted(Exception):
@@ -37,6 +39,7 @@ class StepContext:
     comment: str | None = None
     scope: str | None = None
     cancel_requested: Callable[[], bool] = lambda: False
+    paused_requested: Callable[[], bool] = lambda: False
     # свободное состояние, шаги читают/пишут в него результаты друг друга
     state: dict = field(default_factory=dict)
 
@@ -73,6 +76,8 @@ class Pipeline:
         ctx.session.commit()
 
         for index, step in enumerate(self._steps, start=1):
+            self._wait_while_paused(ctx, queue)
+
             if ctx.cancel_requested():
                 queue.mark_cancelled(ctx.job)
                 ctx.session.commit()
@@ -104,3 +109,24 @@ class Pipeline:
         queue.mark_done(ctx.job)
         ctx.session.commit()
         return ctx
+
+    @staticmethod
+    def _wait_while_paused(ctx: StepContext, queue: JobQueue) -> None:
+        """Блокирует поток (не event loop — это выполняется внутри
+        asyncio.to_thread, см. app.bot.job_runner) пока job на ⏸ Паузе.
+        Проверяется между шагами, не посреди одного — шаг (обычно один
+        LLM-вызов) не прерывается на середине."""
+        if not ctx.paused_requested():
+            return
+
+        queue.mark_paused_manual(ctx.job)
+        ctx.session.commit()
+        try:
+            while ctx.paused_requested():
+                if ctx.cancel_requested():
+                    return  # отмену обработает вызывающий цикл сразу после
+                time.sleep(PAUSE_POLL_SECONDS)
+        finally:
+            if ctx.job.status == JobStatus.PAUSED_MANUAL and not ctx.cancel_requested():
+                queue.mark_resumed(ctx.job)
+                ctx.session.commit()

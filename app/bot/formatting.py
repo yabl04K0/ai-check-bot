@@ -19,7 +19,9 @@ def render_progress(job: Job) -> str:
     pct = int(100 * job.progress_step / job.progress_total) if job.progress_total else 0
     bar = _bar(job.progress_step, job.progress_total)
     step_label = job.progress_label or ""
+    pause_note = "⏸ НА ПАУЗЕ — нажми «▶️ Продолжить»\n" if job.status == JobStatus.PAUSED_MANUAL else ""
     return (
+        f"{pause_note}"
         f"📊 ПРОГРЕСС — {label}\n"
         f"{bar} {pct}%\n"
         f"Шаг {job.progress_step}/{job.progress_total}: {step_label}"
@@ -51,6 +53,7 @@ def render_job_status_line(job: Job) -> str:
         JobStatus.QUEUED: "⏳",
         JobStatus.RUNNING: "▶️",
         JobStatus.PAUSED_QUOTA: "⏸",
+        JobStatus.PAUSED_MANUAL: "⏸",
         JobStatus.DONE: "✅",
         JobStatus.CANCELLED: "✖",
         JobStatus.ERROR: "❌",

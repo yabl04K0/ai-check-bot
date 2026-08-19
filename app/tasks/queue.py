@@ -52,7 +52,10 @@ class JobQueue:
         return job
 
     def is_busy(self) -> bool:
-        return self._session.scalar(select(Job).where(Job.status == JobStatus.RUNNING)) is not None
+        """RUNNING занимает воркер; PAUSED_MANUAL тоже — пайплайн жив, просто
+        стоит на месте (ждёт ▶️ Продолжить), не отдаёт слот следующей задаче."""
+        busy_statuses = (JobStatus.RUNNING, JobStatus.PAUSED_MANUAL)
+        return self._session.scalar(select(Job).where(Job.status.in_(busy_statuses))) is not None
 
     def position_in_queue(self, job_id: int) -> int:
         """1-based позиция среди queued задач, отсортированных по created_at."""
@@ -85,6 +88,12 @@ class JobQueue:
     def mark_paused_quota(self, job: Job, handover_note: str) -> None:
         job.status = JobStatus.PAUSED_QUOTA
         job.handover_note = handover_note
+
+    def mark_paused_manual(self, job: Job) -> None:
+        job.status = JobStatus.PAUSED_MANUAL
+
+    def mark_resumed(self, job: Job) -> None:
+        job.status = JobStatus.RUNNING
 
     def mark_done(self, job: Job) -> None:
         from datetime import datetime, timezone
