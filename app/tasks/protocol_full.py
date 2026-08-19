@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from app.providers.base import ProviderError, RunOptions
 from app.registry_store.store import RegistryFinding, register_or_bump_finding
 from app.tasks import project_context as ctxdata
+from app.tasks import scope as scope_util
 from app.tasks.findings_parse import parse_structured_findings
 from app.tasks.pipeline import Step, StepContext
 
@@ -31,13 +32,16 @@ class Step1to4Registry(Step):
     label = "1-4. Реестр открытых проблем, тесты, логи, sweep"
 
     def run(self, ctx: StepContext) -> None:
+        path_filter = scope_util.path_filter(ctx.scope)
         parts = []
         for project in ctx.projects:
             parts.append(f"### {project.name}")
             parts.append("**Реестр:**\n" + ctxdata.gather_registry(project))
             parts.append("**Тесты:**\n" + ctxdata.gather_tests(project))
             parts.append("**Логи:**\n" + ctxdata.gather_logs(project))
-            parts.append("**Sweep (TODO/FIXME/XXX/HACK):**\n" + ctxdata.sweep(project))
+            sweep_text = ctxdata.sweep(project, path_filter=path_filter)
+            sweep_scope_note = f", путь: {path_filter}" if path_filter else ""
+            parts.append(f"**Sweep (TODO/FIXME/XXX/HACK{sweep_scope_note}):**\n{sweep_text}")
         ctx.state["intake"] = "\n\n".join(parts)
 
 
@@ -130,11 +134,21 @@ class Step8bRegisterFindings(Step):
     label = "8b. Регистрация находок в chek_open.md"
 
     def run(self, ctx: StepContext) -> None:
+        ignore_deferred = scope_util.is_ignore_registry(ctx.scope)
         project_names = ", ".join(p.name for p in ctx.projects)
+        deferred_instruction = (
+            "Скоуп 'ЧЕК всё' — включай в список ВСЕ находки, даже если они уже "
+            "числятся в Отложено/Never в контексте выше."
+            if ignore_deferred
+            else "Находки, уже помеченные [LATER] или [NEVER] в контексте выше, "
+            "заново НЕ включай — человек уже принял по ним решение."
+        )
         prompt = (
             f"Отчёт аудита:\n{ctx.state.get('aggregated_report', '')}\n\n"
             f"Пробелы:\n{ctx.state.get('gaps', '')}\n\n"
+            f"Реестр проекта (см. [OPEN]/[LATER]/[NEVER]):\n{ctx.state.get('intake', '')}\n\n"
             f"Проекты в этом прогоне: {project_names}\n\n"
+            f"{deferred_instruction}\n\n"
             "Составь список находок для реестра. Ответь СТРОГО по одной "
             "находке на строку в формате:\n"
             "severity|project|file::symbol|краткое описание\n"
@@ -149,25 +163,25 @@ class Step8bRegisterFindings(Step):
         parsed = parse_structured_findings(result.text)
         projects_by_name = {p.name: p for p in ctx.projects}
 
-        registered = bumped = skipped = 0
+        outcomes = {"new": 0, "bumped": 0, "deferred_skipped": 0, "moved_from_deferred": 0}
+        skipped_no_path = 0
         for pf in parsed:
             project = projects_by_name.get(pf.project_name)
             path = ctxdata.local_path(project) if project else None
             if path is None:
-                skipped += 1
+                skipped_no_path += 1
                 continue
-            is_new = register_or_bump_finding(
+            outcome = register_or_bump_finding(
                 path,
                 RegistryFinding(file_symbol=pf.file_symbol, description=pf.description, severity=pf.severity),
+                ignore_deferred=ignore_deferred,
             )
-            if is_new:
-                registered += 1
-            else:
-                bumped += 1
+            outcomes[outcome] += 1
 
-        ctx.state["findings_registered"] = registered
-        ctx.state["findings_bumped"] = bumped
-        ctx.state["findings_skipped"] = skipped
+        ctx.state["findings_registered"] = outcomes["new"] + outcomes["moved_from_deferred"]
+        ctx.state["findings_bumped"] = outcomes["bumped"]
+        ctx.state["findings_deferred_skipped"] = outcomes["deferred_skipped"]
+        ctx.state["findings_skipped"] = skipped_no_path
 
 
 class Step9Fixer(Step):
@@ -288,6 +302,8 @@ class Step13HumanConfirm(Step):
         # отдельный FIX-job на generic-пайплайне (см. app/tasks/generic.py).
         skipped = ctx.state.get("findings_skipped", 0)
         skipped_note = f", пропущено {skipped} (не распарсилось/нет local_path)" if skipped else ""
+        deferred = ctx.state.get("findings_deferred_skipped", 0)
+        deferred_note = f", не тронуто (уже в Отложено/Never) {deferred}" if deferred else ""
 
         ctx.state["patch"] = ctx.state.get("fix_proposal")
         ctx.state["final_report"] = (
@@ -295,7 +311,7 @@ class Step13HumanConfirm(Step):
             f"Раундов конвергенции: {ctx.state.get('convergence_rounds', 0)}"
             f"{' (эскалировано)' if ctx.state.get('escalated') else ''}\n"
             f"Реестр: новых находок {ctx.state.get('findings_registered', 0)}, "
-            f"повторных {ctx.state.get('findings_bumped', 0)}{skipped_note}\n\n"
+            f"повторных {ctx.state.get('findings_bumped', 0)}{deferred_note}{skipped_note}\n\n"
             f"Отчёт:\n{ctx.state.get('aggregated_report', '')}\n\n"
             f"Пробелы:\n{ctx.state.get('gaps', '')}\n\n"
             f"Финальный фикс:\n{ctx.state.get('fix_proposal', '')}\n\n"

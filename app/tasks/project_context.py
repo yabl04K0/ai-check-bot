@@ -30,7 +30,14 @@ def gather_registry(project: Project) -> str:
     registry = read_registry(path)
     lines = [f"Открыто: {len(registry.open)}, Отложено: {len(registry.later)}, Never: {len(registry.never)}"]
     for finding in registry.open:
-        lines.append(f"- [{finding.severity or '?'}] {finding.file_symbol}: {finding.description}")
+        lines.append(f"- [OPEN][{finding.severity or '?'}] {finding.file_symbol}: {finding.description}")
+    # later/never тоже показываем — checker должен знать, что человек уже
+    # принял по ним решение, и не тратить прогон на их повторное открытие
+    # (если не выбран скоуп "ЧЕК всё", см. app.tasks.scope).
+    for finding in registry.later:
+        lines.append(f"- [LATER] {finding.file_symbol}: {finding.reason or ''}")
+    for finding in registry.never:
+        lines.append(f"- [NEVER] {finding.file_symbol}: {finding.reason or ''}")
     return "\n".join(lines)
 
 
@@ -73,14 +80,31 @@ def gather_logs(project: Project, *, max_lines: int = 200) -> str:
     return "\n\n".join(chunks) if chunks else "(логов не найдено)"
 
 
-def sweep(project: Project) -> str:
-    """Быстрый grep-скан на TODO/FIXME/XXX и прочие явные маркеры."""
+def sweep(project: Project, *, path_filter: str | None = None) -> str:
+    """Быстрый grep-скан на TODO/FIXME/XXX и прочие явные маркеры.
+
+    path_filter — сужение до подпути (скоуп "Файл/модуль", см.
+    app.tasks.scope). Значение приходит из текста, который человек ввёл в
+    боте — проверяем, что оно не выходит за пределы local_path проекта
+    (без этого можно было бы просканировать что угодно на диске бота)."""
     path = local_path(project)
     if path is None:
         return UNAVAILABLE
+
+    target = path
+    if path_filter:
+        candidate = (path / path_filter).resolve()
+        try:
+            candidate.relative_to(path.resolve())
+        except ValueError:
+            return f"(скоуп '{path_filter}' указывает за пределы проекта — игнорирую)"
+        if not candidate.exists():
+            return f"(путь '{path_filter}' не найден в проекте)"
+        target = candidate
+
     try:
         result = subprocess.run(
-            ["grep", "-rn", "-E", "TODO|FIXME|XXX|HACK", "--include=*.py", str(path)],
+            ["grep", "-rn", "-E", "TODO|FIXME|XXX|HACK", "--include=*.py", str(target)],
             capture_output=True,
             text=True,
             timeout=60,

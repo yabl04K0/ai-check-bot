@@ -65,6 +65,28 @@ def test_sweep_no_markers(tmp_path):
     assert "не найдено" in text
 
 
+def test_sweep_path_filter_restricts_to_subpath(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    (tmp_path / "a" / "mod.py").write_text("# TODO: in a\n")
+    (tmp_path / "b" / "mod.py").write_text("# TODO: in b\n")
+
+    text = ctxdata.sweep(_project(tmp_path), path_filter="a")
+    assert "in a" in text
+    assert "in b" not in text
+
+
+def test_sweep_path_filter_rejects_traversal_outside_project(tmp_path):
+    (tmp_path / "mod.py").write_text("# TODO: safe\n")
+    text = ctxdata.sweep(_project(tmp_path), path_filter="../../etc")
+    assert "за пределы проекта" in text
+
+
+def test_sweep_path_filter_missing_path(tmp_path):
+    text = ctxdata.sweep(_project(tmp_path), path_filter="does/not/exist")
+    assert "не найден" in text
+
+
 def test_gather_tests_no_tests_present(tmp_path):
     text = ctxdata.gather_tests(_project(tmp_path))
     assert "не найдено" in text

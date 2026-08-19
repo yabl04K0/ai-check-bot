@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from app.providers.base import RunOptions
 from app.tasks import project_context as ctxdata
+from app.tasks import scope as scope_util
 from app.tasks.pipeline import Step, StepContext
 
 
@@ -30,7 +31,10 @@ class LiteStep2Scout(Step):
     label = "2. Scout — grep-паттерны + быстрый скан (локальная LLM)"
 
     def run(self, ctx: StepContext) -> None:
-        sweep_results = "\n\n".join(f"{p.name}:\n{ctxdata.sweep(p)}" for p in ctx.projects)
+        path_filter = scope_util.path_filter(ctx.scope)
+        sweep_results = "\n\n".join(
+            f"{p.name}:\n{ctxdata.sweep(p, path_filter=path_filter)}" for p in ctx.projects
+        )
         prompt = (
             f"Контекст:\n{ctx.state.get('intake', '')}\n\n"
             f"Grep-паттерны (TODO/FIXME/XXX/HACK):\n{sweep_results}\n\n"

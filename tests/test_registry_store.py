@@ -5,6 +5,7 @@ from app.registry_store.store import (
     RegistryFinding,
     move_finding,
     read_registry,
+    register_or_bump_finding,
     write_registry,
 )
 
@@ -62,3 +63,59 @@ def test_move_finding_open_to_later(tmp_path):
 
 def test_move_finding_not_found_returns_false(tmp_path):
     assert move_finding(tmp_path, "nope::nope", to="never") is False
+
+
+def test_register_or_bump_new_finding(tmp_path):
+    outcome = register_or_bump_finding(
+        tmp_path, RegistryFinding(file_symbol="a.py::f", description="сломано", severity="high")
+    )
+    assert outcome == "new"
+    assert len(read_registry(tmp_path).open) == 1
+
+
+def test_register_or_bump_existing_open_bumps_attempts(tmp_path):
+    existing = RegistryFinding(file_symbol="a.py::f", description="old", severity="medium", attempts=1)
+    write_registry(tmp_path, Registry(open=[existing]))
+    outcome = register_or_bump_finding(
+        tmp_path, RegistryFinding(file_symbol="a.py::f", description="new desc", severity="critical")
+    )
+    assert outcome == "bumped"
+    loaded = read_registry(tmp_path)
+    assert len(loaded.open) == 1
+    assert loaded.open[0].attempts == 2
+    assert loaded.open[0].severity == "critical"
+    assert loaded.open[0].description == "new desc"
+
+
+def test_register_or_bump_respects_deferred_by_default(tmp_path):
+    """Скоуп по умолчанию ("всё") уважает Отложено/Never — не переоткрывает."""
+    write_registry(
+        tmp_path,
+        Registry(never=[RegistryFinding(file_symbol="a.py::f", description="дизайн такой", reason="не баг")]),
+    )
+    outcome = register_or_bump_finding(
+        tmp_path, RegistryFinding(file_symbol="a.py::f", description="снова нашли", severity="low")
+    )
+    assert outcome == "deferred_skipped"
+    loaded = read_registry(tmp_path)
+    assert loaded.open == []
+    assert len(loaded.never) == 1  # не тронуто
+
+
+def test_register_or_bump_ignore_deferred_moves_back_to_open(tmp_path):
+    """Скоуп "ЧЕК всё" (ignore_deferred=True) переоткрывает даже Never."""
+    write_registry(
+        tmp_path,
+        Registry(later=[RegistryFinding(file_symbol="a.py::f", description="занят", reason="потом")]),
+    )
+    outcome = register_or_bump_finding(
+        tmp_path,
+        RegistryFinding(file_symbol="a.py::f", description="актуально снова", severity="high"),
+        ignore_deferred=True,
+    )
+    assert outcome == "moved_from_deferred"
+    loaded = read_registry(tmp_path)
+    assert loaded.later == []
+    assert len(loaded.open) == 1
+    assert loaded.open[0].attempts == 1
+    assert loaded.open[0].severity == "high"

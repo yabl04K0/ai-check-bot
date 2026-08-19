@@ -7,7 +7,7 @@ from __future__ import annotations
 from app.db.models import Project, ProviderAccountStatus, ProviderName, TaskType
 from app.db.session import get_session
 from app.providers.base import AIProvider, AuthStatus, ProviderResult, RunOptions
-from app.registry_store.store import read_registry
+from app.registry_store.store import Registry, RegistryFinding, read_registry, write_registry
 from app.tasks.factory import build_pipeline
 from app.tasks.pipeline import StepContext
 from app.tasks.queue import JobQueue
@@ -73,3 +73,71 @@ def test_second_full_check_run_bumps_instead_of_duplicating(db, tmp_path):
     registry = read_registry(tmp_path)
     assert len(registry.open) == 2  # не задвоилось
     assert registry.open[0].attempts == 1  # второй прогон = +1 attempt
+
+
+def test_default_scope_respects_deferred_findings(db, tmp_path):
+    """Одна из двух находок уже помечена Never — по умолчанию (без скоупа
+    "ЧЕК всё") Full ЧЕК её не должен переоткрывать."""
+    write_registry(
+        tmp_path,
+        Registry(
+            never=[
+                RegistryFinding(
+                    file_symbol="app/auth.py::validate_token", description="решили что ок", reason="не баг"
+                )
+            ]
+        ),
+    )
+    with get_session() as session:
+        project = Project(name="Demo", repo_full_name="owner/demo", local_path=str(tmp_path))
+        session.add(project)
+        session.flush()
+
+        queue = JobQueue(session)
+        job = queue.enqueue(TaskType.CHECK_FULL, [project.id], scope="all", comment="прогон")
+        ctx = StepContext(
+            job=job, projects=[project], provider=ScriptedProvider(), session=session, scope="all"
+        )
+        build_pipeline(TaskType.CHECK_FULL).run(ctx, queue)
+
+    registry = read_registry(tmp_path)
+    open_symbols = {f.file_symbol for f in registry.open}
+    assert "app/auth.py::validate_token" not in open_symbols  # уважили Never
+    assert "app/db.py::save" in open_symbols  # вторая находка — обычная, регистрируется
+    assert len(registry.never) == 1  # Never не тронут
+
+
+def test_ignore_registry_scope_reopens_deferred_findings(db, tmp_path):
+    """Скоуп "ЧЕК всё" — намеренно переоткрывает даже Never/Later."""
+    write_registry(
+        tmp_path,
+        Registry(
+            never=[
+                RegistryFinding(
+                    file_symbol="app/auth.py::validate_token", description="решили что ок", reason="не баг"
+                )
+            ]
+        ),
+    )
+    with get_session() as session:
+        project = Project(name="Demo", repo_full_name="owner/demo", local_path=str(tmp_path))
+        session.add(project)
+        session.flush()
+
+        queue = JobQueue(session)
+        job = queue.enqueue(
+            TaskType.CHECK_FULL, [project.id], scope="all_ignore_registry", comment="прогон"
+        )
+        ctx = StepContext(
+            job=job,
+            projects=[project],
+            provider=ScriptedProvider(),
+            session=session,
+            scope="all_ignore_registry",
+        )
+        build_pipeline(TaskType.CHECK_FULL).run(ctx, queue)
+
+    registry = read_registry(tmp_path)
+    open_symbols = {f.file_symbol for f in registry.open}
+    assert "app/auth.py::validate_token" in open_symbols  # переоткрыто
+    assert registry.never == []  # больше не в Never

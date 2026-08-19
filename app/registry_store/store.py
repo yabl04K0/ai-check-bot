@@ -174,26 +174,54 @@ def add_open_finding(project_path: Path, finding: RegistryFinding) -> None:
     write_registry(project_path, registry)
 
 
-def register_or_bump_finding(project_path: Path, finding: RegistryFinding) -> bool:
-    """Как add_open_finding, но не плодит дубликаты между прогонами ЧЕКа:
-    если находка с таким file_symbol уже есть в open — просто +1 к
-    attempts и обновляет severity/описание, вместо второй записи.
+def register_or_bump_finding(
+    project_path: Path, finding: RegistryFinding, *, ignore_deferred: bool = False
+) -> str:
+    """Как add_open_finding, но не плодит дубликаты между прогонами ЧЕКа —
+    и уважает решение человека по Отложено/Never (см. README, скоуп
+    "ЧЕК всё" = ignore_deferred=True переопределяет это нарочно).
 
-    Возвращает True если находка новая, False если это был bump."""
+    Возвращает:
+    - "new" — действительно новая находка, добавлена в open
+    - "bumped" — уже была в open, +1 к attempts
+    - "deferred_skipped" — уже в later/never и ignore_deferred=False —
+      находку НЕ трогаем, человек уже принял решение по ней
+    - "moved_from_deferred" — была в later/never, но ignore_deferred=True
+      (скоуп "ЧЕК всё") — вернули в open, +1 к attempts
+    """
     registry = read_registry(project_path)
+    today = date.today().isoformat()
+
     for existing in registry.open:
         if existing.file_symbol == finding.file_symbol:
             existing.attempts += 1
-            existing.updated = date.today().isoformat()
+            existing.updated = today
             if finding.severity:
                 existing.severity = finding.severity
             if finding.description:
                 existing.description = finding.description
             write_registry(project_path, registry)
-            return False
+            return "bumped"
 
-    finding.created = finding.created or date.today().isoformat()
+    for bucket in (registry.later, registry.never):
+        for existing in bucket:
+            if existing.file_symbol == finding.file_symbol:
+                if not ignore_deferred:
+                    return "deferred_skipped"
+                bucket.remove(existing)
+                existing.attempts += 1
+                existing.updated = today
+                existing.reason = None
+                if finding.severity:
+                    existing.severity = finding.severity
+                if finding.description:
+                    existing.description = finding.description
+                registry.open.append(existing)
+                write_registry(project_path, registry)
+                return "moved_from_deferred"
+
+    finding.created = finding.created or today
     finding.updated = finding.updated or finding.created
     registry.open.append(finding)
     write_registry(project_path, registry)
-    return True
+    return "new"
