@@ -97,6 +97,16 @@ class ProviderSettings:
 
 
 @dataclass(frozen=True)
+class NotificationSettings:
+    """Опциональное дублирование отчёта о задаче во внешние каналы (см.
+    app.notifications.webhook) — Telegram остаётся основным и
+    единственным обязательным."""
+
+    slack_webhook_url: str | None = None
+    discord_webhook_url: str | None = None
+
+
+@dataclass(frozen=True)
 class Settings:
     bot_token: str | None
     admin_tg_id: int | None
@@ -109,6 +119,7 @@ class Settings:
     # удобного выбора репо кнопкой при добавлении проекта. Не задано =
     # добавление проекта работает как раньше, только ручной ввод.
     local_repos_root: Path | None = None
+    notifications: NotificationSettings = field(default_factory=NotificationSettings)
 
     def require_bot_token(self) -> str:
         if not self.bot_token:
@@ -182,4 +193,8 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         ),
         db_path=project_root / "data" / "bot.sqlite3",
         local_repos_root=Path(os.getenv("LOCAL_REPOS_ROOT")) if os.getenv("LOCAL_REPOS_ROOT") else None,
+        notifications=NotificationSettings(
+            slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL") or None,
+            discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL") or None,
+        ),
     )

@@ -20,6 +20,7 @@ from app.bot.keyboards import approval_menu, progress_menu, report_menu
 from app.db.models import HistoryEntry, Job, JobStatus, ProviderMode
 from app.db.session import get_session
 from app.logging_setup import log_action
+from app.notifications.webhook import notify_external
 from app.providers.ai_autonomy import job_needs_manual_approval
 from app.providers.registry import ProviderRegistry
 from app.providers.router import NoProviderAvailableError, pick_provider
@@ -274,3 +275,15 @@ async def _deliver_outcome(
         await application.bot.send_message(chat_id, text[:4000], reply_markup=markup)
     except TelegramError:
         logger.exception("Не удалось доставить отчёт по job #%s", job_id)
+
+    # Дублирование в Slack/Discord — best-effort, никогда не должно
+    # ломать доставку в Telegram (см. notify_external), поэтому вызывается
+    # уже после неё, независимо от того, удалась она или нет.
+    settings = getattr(application, "bot_data", {}).get("settings")
+    notifications = getattr(settings, "notifications", None)
+    if notifications and (notifications.slack_webhook_url or notifications.discord_webhook_url):
+        await notify_external(
+            text,
+            slack_webhook_url=notifications.slack_webhook_url,
+            discord_webhook_url=notifications.discord_webhook_url,
+        )
