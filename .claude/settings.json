@@ -1,0 +1,26 @@
+{
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+    "BASH_MAX_OUTPUT_LENGTH": "20000",
+    "MAX_MCP_OUTPUT_TOKENS": "20000"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(pytest*)"
+    ],
+    "ask": [
+      "Bash(rm*)",
+      "Bash(git push*)",
+      "Read(*.log)"
+    ],
+    "deny": [
+      "Read(**/*.zip)",
+      "Read(**/*.tar*)",
+      "Read(**/node_modules/**)",
+      "Read(**/.venv/**)"
+    ]
+  }
+}

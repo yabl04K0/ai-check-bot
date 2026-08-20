@@ -1,0 +1,39 @@
+{
+  "_comment": "AI-kit sync manifest. See CLAUDE.md 'AI-KIT' section for the authority/override rule this file implements. This is a manifest, not a script — the actual sync tool lives in the structure repo (yabl04k0/ai-dev-kit) and is invoked from there, not duplicated per project.",
+  "structure_repo": "yabl04k0/ai-dev-kit",
+  "tier_a_synced_from_structure_repo": [
+    "CLAUDE.md",
+    "AGENTS.md",
+    "AI_COMMANDS.md",
+    "CHEK_PROTOCOL.md",
+    "DELEGATION.md",
+    "BRANCHING.md",
+    "TOKEN_ECONOMY.md",
+    ".claude/agents/scout.md",
+    ".claude/agents/runner.md",
+    ".claude/agents/scribe.md",
+    ".claude/agents/builder.md",
+    ".claude/agents/reviewer.md",
+    ".claude/commands/chek.md",
+    ".claude/commands/prompt.md",
+    "agents/web-researcher.md"
+  ],
+  "tier_b_local_only": [
+    "PROJECT_MEMORY.md",
+    "STATE_LOG.md",
+    "LAST_PROMPT.md",
+    "TROUBLESHOOTING.md",
+    "chek_open.md",
+    "chek_never.md",
+    "chek_later.md",
+    "README.md",
+    "docs/**",
+    ".claude/settings.json",
+    "tools/ai_kit.json"
+  ],
+  "authority": "structure_repo_wins_on_drift",
+  "override_marker": "<!-- ai-kit: local-override reason=\"...\" -->",
+  "override_rule": "A marker directly above a diverging section makes THIS project authoritative for that section only. No marker means the structure repo's version wins on the next sync, silently overwriting local drift. A whole-file override is a marker at the top of the file.",
+  "sync_policy": "diff-and-review only, never a blind overwrite; skip files with no real drift; one factual commit per sync naming the files and the reason",
+  "chek_protocol_note": "CHEK_PROTOCOL.md is TIER A and continuously maintained upstream in the structure repo. Publishing a structure-repo change onward to the separate public chek-protocol repo is a distinct, always-manual step performed from the structure repo, not from this project."
+}
