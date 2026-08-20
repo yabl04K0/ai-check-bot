@@ -53,8 +53,27 @@ stack (planned, from README "Стек"): Python, python-telegram-bot, apschedule
 architecture docs: docs/architecture/ui-map.mermaid (bot menu map), docs/architecture/backend-architecture.mermaid
   (backend) — both describe the Claude-only, Chek-only earlier design; not yet updated for multi-provider / the
   Feature-Fix-Refactor-Custom task types.
-core abstraction not yet implemented: `AIProvider` interface (README "Провайдеры ИИ") — every provider-specific call
-  must route through it; see CLAUDE.md "CRITICAL: provider abstraction".
+core abstraction: `AIProvider` interface (src/ai_check_bot/providers/base.py) — every provider-specific call must
+  route through it; see CLAUDE.md "CRITICAL: provider abstraction". Implemented so far: `ClaudeProvider`
+  (providers/claude.py, wraps anthropic.AsyncAnthropic, per-account proxy_url via a custom httpx.AsyncClient).
+  Codex/Cursor/local-LLM providers are NOT implemented yet — `providers/registry.py` PROVIDER_REGISTRY has one
+  entry ("claude"); adding a provider means one new module + one registry line, nothing else changes.
+api-account health probe (README's "просто чтобы проверять API фишки" ask): implemented as
+  `src/ai_check_bot/probe_service.py` + `scheduler.py`. Model: AIAccount (one credential + optional per-account
+  proxy_url) has up to `config.MAX_PROBES_PER_DAY` (5) ProbeSchedule rows (HH:MM UTC + a configurable probe
+  message); APScheduler (UTC-pinned, see scheduler.py comment on why) fires `run_probe` at each time, which calls
+  `AIProvider.probe()` and logs a ProbeRun row (success/latency/error). "Open a new chat, get a response, delete
+  the chat" from the original ask maps to `AIProvider.probe()`'s contract: exchange one round trip and clean up any
+  server-side conversation resource — for Claude's stateless Messages API that cleanup is correctly a no-op (see
+  providers/claude.py docstring); a future stateful provider (e.g. an Assistants-style thread API) would actually
+  create+delete there.
+bot UI: `src/ai_check_bot/bot.py` is admin-only text commands (`/add_account`, `/add_schedule`, `/accounts`,
+  `/probe_now`), deliberately NOT the inline-keyboard menu README describes — that needs the UX pass over
+  MeCelium/AutoPost/sd-forge-bot (see LAST_PROMPT.md backlog item 6) first, or it gets built twice.
+NOT implemented yet (see LAST_PROMPT.md for the full backlog and priority order): live in-flight agent-status menu,
+  mid-task chat/stop, multi-account POOLING/routing logic (multiple AIAccount rows per provider already work as
+  storage, but nothing picks between them yet), the polished inline-keyboard menu, Codex/Cursor/local-LLM
+  providers, encrypted credential storage (AIAccount.api_key is plaintext in SQLite for now — flagged inline).
 invariants stated in README, not yet enforced by code (enforce when the corresponding module is built):
   SHOP-equivalent for this project: none (not a paid-tariff product).
   self-check (this repo) never auto-pushes even when auto-push is enabled for other managed projects.
@@ -74,3 +93,26 @@ invariants stated in README, not yet enforced by code (enforce when the correspo
   for this bot's own multi-provider/no-code-yet state. Did NOT run a CHEK audit (no code to audit; explicitly
   deferred by the user). Added the AI-kit sync model (structure-repo-authoritative-with-override) as new content,
   not present in the sibling projects at time of porting.
+
+- 2026-08-20 (same day, later) — created two sibling repos for the AI-kit: yabl04K0/0000 (private, canonical
+  TIER A doc stack + tools/sync_ai_kit.py) and yabl04K0/1111 (public mirror of CHEK_PROTOCOL.md alone). Updated
+  this repo's tools/ai_kit.json to point at them (the placeholder names ai-dev-kit/chek-protocol were not
+  available; GitHub repo creation is not reachable from this session by any method — MCP tool lacks Administration
+  permission, and the session's network proxy blocks all raw GitHub write calls outside the allowed MCP tools —
+  the user created the two repos by hand instead). yabl04K0/1111 still needs its visibility flipped to public by
+  hand; no path exists to do that from this environment either.
+
+- 2026-08-20 (same day, later still) — implemented the first item of the feature backlog: `AIProvider`
+  abstraction, `ClaudeProvider`, SQLAlchemy models (AIAccount/ProbeSchedule/ProbeRun), probe_service.py,
+  APScheduler wiring, and a minimal admin-only bot.py. Critic pass caught and fixed 4 real bugs before tests ran:
+  Base.metadata.create_all() silently creating zero tables if models.py was never imported first (db.py now
+  force-imports it); APScheduler defaulting to local system timezone while the bot tells the user "UTC"
+  (scheduler now pinned to timezone="UTC" explicitly); naive `datetime.utcnow()` on both timestamp columns
+  (switched to timezone-aware `datetime.now(timezone.utc)` — this exact footgun is literally named in this
+  project's own CHEK_PROTOCOL.md reference examples); and a bare `except Exception` in bot.py that would have
+  swallowed real bugs, not just the intended IntegrityError. A 5th bug (the MAX_PROBES_PER_DAY=5 limit never
+  actually triggering) was caught BY a test, not the critic pass: `account.schedules` is a relationship collection
+  that caches on first access under `expire_on_commit=False`, and add_schedule() was writing new rows via the raw
+  `account_id` column rather than the relationship attribute, so the cached collection never saw them — fixed by
+  querying ProbeSchedule directly instead of trusting the relationship cache. 8/8 tests green after the fix
+  (`pytest -q`). Not committed yet — pending the user's go-ahead per CLAUDE.md's commit rule.
