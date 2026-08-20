@@ -1,6 +1,7 @@
 {
-  "_comment": "AI-kit sync manifest. See CLAUDE.md 'AI-KIT' section for the authority/override rule this file implements. This is a manifest, not a script — the actual sync tool lives in the structure repo (yabl04k0/ai-dev-kit) and is invoked from there, not duplicated per project.",
-  "structure_repo": "yabl04k0/ai-dev-kit",
+  "_comment": "AI-kit sync manifest. See CLAUDE.md 'AI-KIT' section for the authority/override rule this file implements. This is a manifest, not a script — the actual sync tool lives in the structure repo (yabl04k0/0000, private) and is invoked from there, not duplicated per project. Public mirror of CHEK_PROTOCOL.md alone: yabl04k0/1111.",
+  "structure_repo": "yabl04k0/0000",
+  "public_chek_protocol_repo": "yabl04k0/1111",
   "tier_a_synced_from_structure_repo": [
     "CLAUDE.md",
     "AGENTS.md",
