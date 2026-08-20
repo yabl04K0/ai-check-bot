@@ -119,6 +119,35 @@ def test_approved_job_id_bypasses_gate_once(db, monkeypatch):
     assert job_id not in job_runner_module.APPROVED_JOB_IDS
 
 
+def test_does_not_start_second_job_while_another_is_already_running(db, monkeypatch):
+    """Регрессия: пока job A ждёт подтверждения (QUEUED, is_busy()==False,
+    т.к. is_busy считает только RUNNING/PAUSED_MANUAL), человек мог тем
+    временем подтвердить/enqueue-нуть job B, которая реально стартовала
+    (RUNNING). Если после этого пришло подтверждение на A, start_job(A)
+    не должен молча пометить её RUNNING поверх уже выполняющейся B —
+    должен оставить A в QUEUED и выйти, доверяя обычному дренажу очереди
+    (хвост start_job после завершения B)."""
+    with get_session() as session:
+        job_a = _make_job(session)
+        job_b = Job(task_type=TaskType.FIX, status=JobStatus.RUNNING, progress_total=1)
+        session.add(job_b)
+        session.flush()
+        job_b_id = job_b.id
+
+    set_ai_github_token_access(True)
+    job_runner_module.APPROVED_JOB_IDS.add(job_a)
+    application, send_message = _fake_application()
+    monkeypatch.setattr(job_runner_module, "_run_pipeline_blocking", _fake_pipeline_marks_done)
+    monkeypatch.setattr(job_runner_module, "_progress_loop", AsyncMock())
+
+    _run(job_runner_module.start_job(application, job_a))
+
+    with get_session() as session:
+        assert session.get(Job, job_a).status == JobStatus.QUEUED
+        assert session.get(Job, job_b_id).status == JobStatus.RUNNING
+    send_message.assert_not_awaited()
+
+
 def test_job_without_chat_id_errors_instead_of_hanging_forever(db):
     """Задача без chat_id (нет живого юзера, которому показать запрос) не
     должна тихо зависать в QUEUED навсегда — явная ошибка понятнее."""

@@ -69,6 +69,17 @@ async def start_job(application: Application, job_id: int) -> None:
         if job is None:
             logger.error("start_job: job #%s не найден", job_id)
             return
+        if JobQueue(session).is_busy():
+            # Другая задача уже RUNNING/PAUSED_MANUAL — оставляем эту в
+            # QUEUED, естественный дренаж (хвост этой же функции после
+            # завершения текущей) подхватит её сам. Без этой проверки
+            # гейт подтверждения (см. ai_autonomy.job_needs_manual_approval)
+            # мог держать задачу QUEUED-но-не-busy минутами, пока человек
+            # не тапнет "Разрешить" — за это время is_busy() у ДРУГОЙ,
+            # параллельно запускаемой задачи (confirm()/_enqueue_fix/
+            # autocheck._tick) тоже видит False и тоже пытается стартовать,
+            # а mark_running() ниже по коду это никак не проверял.
+            return
         chat_id = job.created_by_tg_id
         task_type = job.task_type
 
