@@ -20,7 +20,7 @@ async def _run_scheduled_probe(session_factory: sessionmaker, schedule_id: int) 
         if schedule is None or not schedule.enabled:
             return
         account = session.get(AIAccount, schedule.account_id)
-        if account is None:
+        if account is None or not account.enabled:
             return
         await run_probe(session, account, schedule.message)
 

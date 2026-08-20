@@ -9,6 +9,16 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ai_check_bot.db import Base
 
 
+def utc_now() -> dt.datetime:
+    """Naive datetime, always UTC by convention — not tz-aware. SQLite does not reliably
+    round-trip tzinfo through sqlalchemy.DateTime(timezone=True), so mixing an aware
+    'now' with a naive value read back from the DB raises TypeError on comparison. The
+    convention that matters (this project's actual CHEK_PROTOCOL.md concern) is UTC vs
+    accidental local time, not naive vs aware — naive-but-always-UTC is consistent and
+    SQLite-safe as long as every reader/writer in this codebase uses this helper."""
+    return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+
+
 class AIAccount(Base):
     """One credential for one AI provider. Several rows may share the same `provider`
     (multi-account pooling) — routing across them is not implemented yet, only storage."""
@@ -22,8 +32,9 @@ class AIAccount(Base):
     # Plaintext for now — README "GitHub-интеграция"/"Провайдеры ИИ" already flags this repo's
     # long-term plan is an encrypted credential store; do not treat this column as done.
     api_key: Mapped[str] = mapped_column()
-    proxy_url: Mapped[str | None] = mapped_column(default=None)  # e.g. socks5://127.0.0.1:1080
-    created_at: Mapped[dt.datetime] = mapped_column(default=lambda: dt.datetime.now(dt.timezone.utc))
+    proxy_url: Mapped[str | None] = mapped_column(default=None)  # e.g. socks5://127.0.0.1:1080 (per-account Xray)
+    enabled: Mapped[bool] = mapped_column(default=True)  # disabled accounts are skipped by the router and scheduler
+    created_at: Mapped[dt.datetime] = mapped_column(default=utc_now)
 
     schedules: Mapped[list["ProbeSchedule"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
@@ -56,7 +67,7 @@ class ProbeRun(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("ai_accounts.id"))
-    ran_at: Mapped[dt.datetime] = mapped_column(default=lambda: dt.datetime.now(dt.timezone.utc))
+    ran_at: Mapped[dt.datetime] = mapped_column(default=utc_now)
     success: Mapped[bool] = mapped_column()
     latency_ms: Mapped[int | None] = mapped_column(default=None)
     error: Mapped[str | None] = mapped_column(default=None)

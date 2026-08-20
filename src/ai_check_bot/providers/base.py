@@ -13,6 +13,13 @@ class ProbeResult:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class TaskResult:
+    success: bool
+    text: str = ""
+    error: str | None = None
+
+
 class AIProvider(ABC):
     """One connected account of one AI provider. `proxy_url` is optional and per-account,
     not global — each account may sit behind its own egress proxy."""
@@ -27,4 +34,14 @@ class AIProvider(ABC):
         server-side conversation/session resource the call created. For a stateless
         provider API (no server-side thread object) cleanup is a no-op — that is correct,
         not a shortcut; each subclass documents which case it is."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def run_task(self, prompt: str) -> TaskResult:
+        """Execute a real free-text task (README Task Type 'Кастом') and return its
+        answer. Unlike probe(), this is meant to be cancellable mid-flight: the caller
+        may wrap it in an asyncio.Task and cancel that task directly (see jobs.py
+        attach_task/request_cancel) — implementations should let CancelledError
+        propagate rather than swallowing it, so the caller's cancellation actually takes
+        effect instead of silently completing anyway."""
         raise NotImplementedError

@@ -115,4 +115,56 @@ invariants stated in README, not yet enforced by code (enforce when the correspo
   that caches on first access under `expire_on_commit=False`, and add_schedule() was writing new rows via the raw
   `account_id` column rather than the relationship attribute, so the cached collection never saw them — fixed by
   querying ProbeSchedule directly instead of trusting the relationship cache. 8/8 tests green after the fix
-  (`pytest -q`). Not committed yet — pending the user's go-ahead per CLAUDE.md's commit rule.
+  (`pytest -q`). Committed as 988d115.
+
+- 2026-08-20 (same day, later still) — implemented the rest of the feature backlog the user described, after
+  reading the sibling bots' actual UI code for patterns (MeCelium's src/mecelium/bot/ui.py — OK-dismiss/edit-in-
+  place pattern, ported to python-telegram-bot as ui.py; sd-forge-bot's keyboards.py — 2-column compact rows with
+  the current value shown inside the button label, ported as keyboards.py, since it already uses the same
+  `telegram` library this project does, unlike MeCelium/AutoPost's aiogram):
+  - AIAccount gained `enabled` (router/scheduler skip disabled accounts) and proxy/enable/delete/lookup service
+    functions (probe_service.set_account_proxy/set_account_enabled/delete_account/get_account_by_label).
+    add_account() now rejects an unknown provider AT ADD TIME (UnknownProviderError) instead of failing every
+    future probe against that account with a bare ValueError from get_provider().
+  - providers/router.py: pick_account(session, provider) — least-recently-used-by-ProbeRun selection across every
+    enabled account of a provider. This is the actual payoff of "multiple accounts, seamless" — task_service.py's
+    run_custom_task() calls it so a user names a PROVIDER, never a specific account.
+  - input_flow.py: waiting_for + waiting_for_set_at with a TTL, checked on read — the sibling bots' own CLAUDE.md
+    flags exactly this pattern ("waiting_for without waiting_for_set_at, TTL dead, state stuck forever") as a
+    known footgun; built it correctly from the start instead of reproducing it.
+  - jobs.py: a generic in-flight job (live per-worker status text, a cancel flag for cooperative multi-worker
+    loops, AND real asyncio.Task cancellation via attach_task/request_cancel for a single long call). This is the
+    "which/how many agents active" + "stop mid-task" mechanics — infrastructure, not the CHEK fleet itself (that
+    still does not exist; see NOT implemented below). Proven on two real call sites, not just unit tests:
+    bot.py's "🔄 Проверить всё сейчас" (probe every enabled account, cooperative cancel between accounts) and
+    "✨ Новая задача" (README Task Type "Кастом": one real AI call via run_custom_task, REAL mid-flight
+    cancellation — tapping cancel calls asyncio.Task.cancel() on the actual in-flight anthropic call, not just a
+    flag checked between steps, because there are no discrete steps in a single call).
+  - bot.py rewritten from flat admin commands to the inline-keyboard menu (keyboards.py): 🔌 Провайдеры ИИ ->
+    account list -> account detail (schedule / proxy / probe now / enable-disable / delete-with-confirm) ->
+    schedule submenu (list/add/delete, still capped at 5). Free-text input after a button prompt (add account,
+    set proxy, add schedule, task prompt) goes through input_flow's waiting_for; a message with no pending
+    waiting_for gets queued as a job interjection if one is running for that chat, otherwise gets a hint to
+    /start. The old flat commands (/add_account etc.) were removed rather than kept alongside the menu — two UIs
+    for the same thing invites exactly the drift CLAUDE.md's own doc-writing rules warn about.
+  - Critic pass + tests caught 3 more real bugs beyond the 5 from the previous entry: a duplicate `cancel_job_cb`
+    definition (dead code from an editing mistake); an awkward local import "to avoid a cycle" that did not
+    actually avoid any cycle (removed, pick_account now imported normally at module level); and — caught by a
+    test, not the critic pass — router.pick_account comparing an offset-naive datetime (SQLite drops tzinfo on
+    round-trip through sqlalchemy.DateTime even when the Python side used datetime.now(timezone.utc)) against an
+    offset-aware sentinel, raising TypeError. Fixed by adopting one explicit convention project-wide
+    (models.utc_now(): naive datetime, always UTC) instead of tz-aware datetimes that SQLite cannot actually
+    preserve — this supersedes the "timezone-aware datetime.now(timezone.utc)" fix noted in the previous session-
+    log entry; that fix was correct in isolation but incomplete once a second session read the value back.
+  - 34/34 tests green (`pytest -q`): 8 from the previous entry + 26 new (jobs.py, router.py, input_flow.py,
+    task_service.py, and the extended probe_service.py surface).
+
+  NOT implemented, and each is a materially different scope of work than what's above, not a small remaining
+  step: Codex/Cursor/local-LLM providers (only ClaudeProvider exists; adding one is one module + one registry
+  line per providers/registry.py's own docstring, but nobody has written that module); persisted task/probe
+  history beyond the live-during-the-job jobs.py state (README's "История задач" admin screen); encrypted
+  credential storage (AIAccount.api_key is plaintext, flagged inline in models.py since the first entry); and —
+  the big one — the actual 13-step CHEK audit fleet against an arbitrary target repo (README "Режимы аудита"),
+  which means spawning/monitoring real external agent sessions per provider, GitHub read/write integration, and
+  quota tracking. That is this bot's entire core product, not a backlog line item, and deserves its own properly
+  scoped build rather than being rushed alongside everything above.

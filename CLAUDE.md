@@ -156,7 +156,7 @@ reviewer. NEVER delete a test to make CHEK green.
 
 Setup: `python -m venv venv && source venv/bin/activate && pip install -r requirements-dev.txt`
 Tests: `PYTHONPATH=src pytest -q` (pyproject.toml also sets `pythonpath = ["src"]`, so plain `pytest -q` from the
-  repo root works once the venv is active). Healthy collection as of the last run: 8 tests, all green.
+  repo root works once the venv is active). Healthy collection as of the last run: 34 tests, all green.
 Bot: `PYTHONPATH=src python -m ai_check_bot.bot` (needs `BOT_TOKEN` and `ADMIN_TG_ID` in `.env`; AI-account
   credentials are added at runtime via bot commands, not `.env` — see `src/ai_check_bot/bot.py`).
 Package layout: `src/ai_check_bot/` (src-layout, not a flat package) — `config.py`, `db.py`/`models.py`,

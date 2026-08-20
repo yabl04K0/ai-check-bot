@@ -7,9 +7,11 @@ import time
 import anthropic
 import httpx
 
-from ai_check_bot.providers.base import AIProvider, ProbeResult
+from ai_check_bot.providers.base import AIProvider, ProbeResult, TaskResult
 
 PROBE_MODEL = "claude-haiku-4-5-20251001"
+TASK_MODEL = "claude-sonnet-4-5-20250929"
+TASK_MAX_TOKENS = 4096
 
 
 class ClaudeProvider(AIProvider):
@@ -31,3 +33,21 @@ class ClaudeProvider(AIProvider):
         finally:
             await client.close()
         return ProbeResult(success=True, latency_ms=int((time.monotonic() - started) * 1000))
+
+    async def run_task(self, prompt: str) -> TaskResult:
+        client = self._client()
+        try:
+            response = await client.messages.create(
+                model=TASK_MODEL,
+                max_tokens=TASK_MAX_TOKENS,
+                messages=[{"role": "user", "content": prompt}],
+            )
+        except anthropic.APIError as exc:
+            return TaskResult(success=False, error=str(exc))
+        finally:
+            # asyncio.CancelledError (task.cancel() from the jobs.py cancel button)
+            # passes through this finally and still closes the client, then re-raises —
+            # do NOT catch it above, only anthropic.APIError.
+            await client.close()
+        text = "".join(block.text for block in response.content if block.type == "text")
+        return TaskResult(success=True, text=text)
