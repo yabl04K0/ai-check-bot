@@ -168,3 +168,20 @@ invariants stated in README, not yet enforced by code (enforce when the correspo
   which means spawning/monitoring real external agent sessions per provider, GitHub read/write integration, and
   quota tracking. That is this bot's entire core product, not a backlog line item, and deserves its own properly
   scoped build rather than being rushed alongside everything above.
+
+- 2026-08-21 — started on the CHEK fleet (LAST_PROMPT.md's GOAL) with the one slice that's genuinely tractable
+  without an agent-loop engine: `chek_registry.py` implements CHEK_PROTOCOL.md Step 1 (load chek_open/never/
+  later.md, check the "each id in at most one file" invariant) and the write-back half of Step 13 (append/remove
+  an entry). Parses/renders the exact YAML-list-under-a-marker-comment format each registry file documents in its
+  own header, via PyYAML (new dependency — justified per CLAUDE.md's minimal-code ladder: hand-rolling a parser
+  for nested indented lists would be more code and more bug-prone than a standard, small, stable dependency).
+  Deliberately does NOT implement: Step 1's GC-against-code check (needs Grep/Glob over a target repo — belongs
+  to the orchestrator, not this pure-parsing module) or anything from Steps 4b-12 (the actual fleet — still not
+  started; see LAST_PROMPT.md for why that's its own scoped effort).
+  Tests caught one real gap during the critic pass (not a production bug, a coverage gap): the round-trip test
+  for `passes_run=0` would have passed even if the serializer silently dropped zero values (re-parsing falls
+  back to the dataclass default, which is also 0) — added a test that inspects the raw serialized YAML text
+  directly, not just the value after re-parsing, to actually pin the `v not in (None, [], "")` filter (not
+  `if v` truthiness) that makes zero survive.
+  50/50 tests green (`pytest -q`). Not committed yet at time of writing this entry — see STATE_LOG.md /
+  git log for whether it landed.
