@@ -44,6 +44,12 @@ class CursorProvider(AIProvider):
         self._cli_path = cli_path
         self._github_token = github_token
 
+    def update_github_token(self, token: str | None) -> None:
+        """Подхватить новый токен без рестарта провайдера — вызывается,
+        когда GitHub-токен меняют прямо из бота (⚙️ Настройки → 🐙 GitHub →
+        🔑 Токен), см. app.bot.handlers.github."""
+        self._github_token = token
+
     def auth_status(self) -> AuthStatus:
         if not self._cli_path:
             return AuthStatus(

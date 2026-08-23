@@ -4,21 +4,47 @@
 from __future__ import annotations
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, ContextTypes
+from telegram.error import TelegramError
+from telegram.ext import Application, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from app.bot.keyboards import back_button
+from app.db.models import ProviderName
 from app.db.session import get_session
 from app.github_integration.client import GitHubClient, GitHubError
 from app.github_integration.rotation import check_token_age
+from app.github_integration.token_store import (
+    clear_token_override,
+    get_token_override,
+    resolve_github_token,
+    set_token_override,
+)
 from app.logging_setup import log_action
+from app.providers.cursor import CursorProvider
+from app.providers.registry import ProviderRegistry
+
+NO_TOKEN_TEXT = (
+    "🐙 GitHub-токен не задан.\n\n"
+    "Задай его через 🔑 Токен → «Задать/обновить» прямо в чате, или "
+    "GITHUB_TOKEN в .env (нужен рестарт бота)."
+)
+
+
+def _invalidate_client_cache(context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.application.bot_data.pop("github_client", None)
+    context.application.bot_data.pop("github_client_token", None)
 
 
 def _get_client(context: ContextTypes.DEFAULT_TYPE) -> GitHubClient | None:
     settings = context.application.bot_data["settings"]
-    if not settings.github_token:
+    token = resolve_github_token(settings)
+    if not token:
         return None
-    if "github_client" not in context.application.bot_data:
-        context.application.bot_data["github_client"] = GitHubClient(settings.github_token)
+    # Кэш инвалидируется по совпадению токена, а не только по наличию ключа
+    # — иначе смена токена через бота (см. receive_token_text) не подхватится
+    # без рестарта, пока не истечёт что-то ещё, чего тут нет.
+    if context.application.bot_data.get("github_client_token") != token:
+        context.application.bot_data["github_client"] = GitHubClient(token)
+        context.application.bot_data["github_client_token"] = token
     return context.application.bot_data["github_client"]
 
 
@@ -27,9 +53,7 @@ async def show_github_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await query.answer()
     client = _get_client(context)
     if client is None:
-        await query.edit_message_text(
-            "🐙 GitHub-токен не задан (GITHUB_TOKEN в .env).", reply_markup=back_button()
-        )
+        await query.edit_message_text(NO_TOKEN_TEXT, reply_markup=_no_token_menu())
         return
 
     try:
@@ -49,7 +73,7 @@ async def show_github_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     settings = context.application.bot_data["settings"]
     with get_session() as session:
-        age = check_token_age(session, settings.github_token)
+        age = check_token_age(session, resolve_github_token(settings))
         session.commit()
     header = "📋 Репозитории:"
     if age.needs_rotation_warning:
@@ -58,16 +82,36 @@ async def show_github_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await query.edit_message_text(header, reply_markup=InlineKeyboardMarkup(rows))
 
 
-async def show_token_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+def _token_menu(*, has_override: bool) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton("🔑 Задать/обновить токен", callback_data="gh:token_set")]]
+    if has_override:
+        rows.append(
+            [InlineKeyboardButton("🗑 Убрать (вернуться к .env)", callback_data="gh:token_clear")]
+        )
+    rows.append([back_button("menu:github")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _no_token_menu() -> InlineKeyboardMarkup:
+    return _token_menu(has_override=False)
+
+
+async def _render_token_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Общий рендер экрана токена — без query.answer(), потому что вызывающие
+    хендлеры (show_token_status и clear_token) сами уже ответили на callback
+    query своим текстом, а Telegram не даёт отвечать на один callback дважды."""
     query = update.callback_query
-    await query.answer()
     settings = context.application.bot_data["settings"]
-    if not settings.github_token:
-        await query.edit_message_text("GitHub-токен не задан.", reply_markup=back_button("menu:github"))
+    has_override = get_token_override() is not None
+    token = resolve_github_token(settings)
+    markup = _token_menu(has_override=has_override)
+
+    if not token:
+        await query.edit_message_text(NO_TOKEN_TEXT, reply_markup=markup)
         return
 
     with get_session() as session:
-        age = check_token_age(session, settings.github_token)
+        age = check_token_age(session, token)
         session.commit()
 
     if age.needs_rotation_warning:
@@ -75,16 +119,92 @@ async def show_token_status(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     else:
         status_line = f"✅ Активен, {age.days_since} дн. с момента, как бот увидел этот токен"
 
+    source = "бот (переопределяет .env)" if has_override else ".env"
     text = (
-        f"🔑 Токен\n{status_line}\n\n"
+        f"🔑 Токен (источник: {source})\n{status_line}\n\n"
         "Переиздать: создай новый fine-grained PAT в GitHub (Settings → "
-        "Developer settings), обнови GITHUB_TOKEN в .env и перезапусти "
-        "бота — сам бот токен не меняет, это ручной шаг за пределами чата.\n\n"
+        "Developer settings) и пришли его через «Задать/обновить токен» — "
+        "применяется сразу, рестарт бота не нужен.\n\n"
         "(Дата создания токена не отдаётся GitHub API для fine-grained PAT — "
         "отсчёт идёт с момента, когда бот впервые увидел этот токен, это "
         "оценка, не точная дата выпуска.)"
     )
-    await query.edit_message_text(text, reply_markup=back_button("menu:github"))
+    await query.edit_message_text(text, reply_markup=markup)
+
+
+async def show_token_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.callback_query.answer()
+    await _render_token_status(update, context)
+
+
+async def prompt_set_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    context.user_data["awaiting"] = "github_token"
+    await query.edit_message_text(
+        "🔑 Пришли новый GitHub-токен следующим сообщением.\n\n"
+        "Fine-grained PAT: Contents (rw) + Administration (только смена "
+        "видимости), БЕЗ delete_repo — см. README.\n\n"
+        "Сообщение с токеном будет сразу удалено ботом из чата после сохранения.",
+        reply_markup=back_button("menu:github"),
+    )
+
+
+async def receive_token_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if context.user_data.get("awaiting") != "github_token":
+        return
+    context.user_data["awaiting"] = None
+
+    settings = context.application.bot_data["settings"]
+    if not (settings.admin_tg_id and update.effective_user.id == settings.admin_tg_id):
+        return  # флаг мог остаться от другого юзера, если был сброшен странно
+
+    token = update.message.text.strip()
+
+    # Токен в открытом чате — секрет, который не должен оставаться в
+    # истории переписки. Бот может удалять входящие сообщения в приватных
+    # чатах (Telegram Bot API), поэтому чистим сообщение сразу, независимо
+    # от того, валиден ли текст как токен.
+    try:
+        await update.message.delete()
+    except TelegramError:
+        pass  # не критично для сохранения токена, просто не смогли подчистить чат
+
+    if not token or any(ch.isspace() for ch in token):
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "⚠️ Похоже на не тот текст — токен не сохранён. Открой 🐙 GitHub → 🔑 Токен ещё раз.",
+        )
+        return
+
+    set_token_override(token)
+    _invalidate_client_cache(context)
+    registry: ProviderRegistry = context.application.bot_data["provider_registry"]
+    cursor_provider = registry.get(ProviderName.CURSOR)
+    if isinstance(cursor_provider, CursorProvider):
+        cursor_provider.update_github_token(token)
+
+    log_action(str(update.effective_user.id), "github_token_set_via_bot", "")
+    await context.bot.send_message(
+        update.effective_chat.id,
+        "✅ GitHub-токен сохранён и уже используется — рестарт бота не нужен.",
+        reply_markup=back_button("menu:github"),
+    )
+
+
+async def clear_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    clear_token_override()
+    _invalidate_client_cache(context)
+    settings = context.application.bot_data["settings"]
+    registry: ProviderRegistry = context.application.bot_data["provider_registry"]
+    cursor_provider = registry.get(ProviderName.CURSOR)
+    if isinstance(cursor_provider, CursorProvider):
+        cursor_provider.update_github_token(settings.github_token)
+
+    log_action(str(update.effective_user.id), "github_token_override_cleared", "")
+    await query.answer("Убрано")
+    await _render_token_status(update, context)
 
 
 def _repo_menu(index: int, private: bool) -> InlineKeyboardMarkup:
@@ -179,7 +299,7 @@ async def close_public(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await query.answer()
     client = _get_client(context)
     if client is None:
-        await query.edit_message_text("GitHub-токен не задан.", reply_markup=back_button())
+        await query.edit_message_text(NO_TOKEN_TEXT, reply_markup=_no_token_menu())
         return
     try:
         result = client.close_all_public()
@@ -207,8 +327,17 @@ async def close_public(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(show_github_menu, pattern=r"^menu:github$"))
     application.add_handler(CallbackQueryHandler(show_token_status, pattern=r"^gh:token$"))
+    application.add_handler(CallbackQueryHandler(prompt_set_token, pattern=r"^gh:token_set$"))
+    application.add_handler(CallbackQueryHandler(clear_token, pattern=r"^gh:token_clear$"))
     application.add_handler(CallbackQueryHandler(show_repo, pattern=r"^gh:repo:\d+$"))
     application.add_handler(CallbackQueryHandler(toggle_visibility, pattern=r"^gh:toggle:\d+$"))
     application.add_handler(CallbackQueryHandler(show_issues, pattern=r"^gh:issues:\d+$"))
     application.add_handler(CallbackQueryHandler(confirm_close_public, pattern=r"^gh:close_public$"))
     application.add_handler(CallbackQueryHandler(close_public, pattern=r"^gh:close_public_confirm$"))
+    # Отдельная группа от settings_admin.on_text (у "awaiting" общий
+    # user_data, но PTB выполняет максимум один хендлер на группу за апдейт
+    # — два текстовых хендлера в одной группе конкурировали бы за один и
+    # тот же текст).
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, receive_token_text), group=3
+    )

@@ -13,6 +13,7 @@ from app.bot.keyboards import back_button
 from app.db.models import Project
 from app.db.session import get_session
 from app.github_integration.client import GitHubClient, GitHubError
+from app.github_integration.token_store import resolve_github_token
 from app.logging_setup import log_action
 from app.tasks.local_repos import detect_repo_full_name, discover_local_repos
 from app.tasks.patch_apply import commit_all, has_uncommitted_changes
@@ -160,7 +161,9 @@ async def manual_push(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     project_id = int(query.data.split(":")[-1])
     settings = context.application.bot_data["settings"]
     await query.edit_message_text("⏳ Пушу без участия ИИ…")
-    text = await asyncio.to_thread(_manual_push_blocking, project_id, settings.github_token)
+    text = await asyncio.to_thread(
+        _manual_push_blocking, project_id, resolve_github_token(settings)
+    )
     await query.edit_message_text(text, reply_markup=back_button(f"proj:manage:{project_id}"))
 
 

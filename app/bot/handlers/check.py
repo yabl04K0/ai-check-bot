@@ -24,6 +24,7 @@ from app.bot.keyboards import (
 from app.db.models import HistoryEntry, Job, JobStatus, Project, ProviderMode, TaskType
 from app.db.session import get_session
 from app.github_integration.client import GitHubClient, GitHubError
+from app.github_integration.token_store import resolve_github_token
 from app.logging_setup import log_action
 from app.registry_store.store import move_finding
 from app.registry_store.sync import sync_project_findings
@@ -497,7 +498,9 @@ async def commit_yes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await query.edit_message_text(f"⏳ Применяю патч и коммичу для #{job_id}…")
 
     settings = context.application.bot_data["settings"]
-    text = await asyncio.to_thread(_apply_and_commit_blocking, job_id, settings.github_token)
+    text = await asyncio.to_thread(
+        _apply_and_commit_blocking, job_id, resolve_github_token(settings)
+    )
     await context.bot.send_message(update.effective_chat.id, text[:4000], reply_markup=back_button())
 
 
