@@ -30,17 +30,15 @@ READ FIRST: PROJECT_MEMORY.md (all session-log entries about chek_registry/chek_
   agent_loop.py (provider-agnostic turn loop, read-only-role enforcement via allowed_tools, unit tested with a
   scripted fake model) + ClaudeProvider.run_agentic_task (the real Anthropic tool-use adapter).
 
-## GOAL — Steps 5-12: the actual fleet orchestration, now that the engine exists
+## GOAL — Steps 6-12: the actual fleet orchestration, now that the engine AND the planner exist
 
-Steps 1, 2, 4, and 13's write-back are real. Step 3 (deploy state) and 4b (web research) are legitimately skippable/
-deferrable per the protocol itself when no deploy target or research need exists. What's left is Steps 5-12 —
-CHEK_PROTOCOL.md's own text for each step IS the spec; the prompts quoted there are meant to be pasted close to
-verbatim as `system_prompt`/`user_prompt` to `provider.run_agentic_task(root, system_prompt, user_prompt,
-allowed_tools=..., max_turns=...)`:
-  5. Fleet planner — ONE run_agentic_task call, allowed_tools=agent_loop.READ_ONLY_TOOLS, the Step 5 planner prompt
-     verbatim. Parse its DOMAIN/PROMPT/SUMMARY output into a structured fleet spec (new code — a small parser,
-     similar in spirit to chek_registry.py's parsing but for this different, less strictly-formatted output).
-  6. Fleet checkers — one run_agentic_task call per domain from the planner's spec, IN PARALLEL
+Steps 1, 2, 4, 5, and 13's write-back are real (chek_registry.py, chek_scan.py, chek_fleet.py — read
+chek_fleet.run_fleet_planner/parse_planner_output/FleetSpec before writing Step 6, its output is Step 6's input).
+Prompts for Steps 6/8/9/10/11/12 should come from chek_protocol_text.py the same way chek_fleet.py's planner does
+(extract_fenced_blocks on find_section(sections, "STEP N")) — do NOT hardcode a second copy of any of them.
+Step 3 (deploy state) and 4b (web research) are legitimately skippable/deferrable per the protocol itself when no
+deploy target or research need exists. What's left:
+  6. Fleet checkers — one run_agentic_task call per domain from chek_fleet.FleetSpec.domains, IN PARALLEL
      (`asyncio.gather`), allowed_tools=READ_ONLY_TOOLS, no exceptions. This is the one place jobs.py's
      multi-worker live-status rendering is exactly what's needed — reuse jobs.create_job/run_workers, do not
      build a second status system. Coverage check (Step 7) after: Glob vs the union of "Прочитано:" lines each

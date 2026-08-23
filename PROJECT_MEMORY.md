@@ -222,3 +222,29 @@ invariants stated in README, not yet enforced by code (enforce when the correspo
   28 new tests (91 total), all green. Still not started: the actual Steps 5-12 role prompts/orchestration
   (planner, checkers, fixer, critics, the convergence loop) that will call run_agentic_task — this session built
   the engine, not the fleet itself yet.
+
+- 2026-08-23 (same day, later) — Step 5, the fleet planner, is real. Two new modules:
+  - `chek_protocol_text.py`: splits CHEK_PROTOCOL.md into {section title: body} by its own '# ===\n# TITLE\n#
+    ===' header convention, and extracts fenced ``` prompt blocks from a section. Prompts are read out of the MD
+    file at runtime, never copied into a Python string — CHEK_PROTOCOL.md's own header calls itself "the ONLY
+    copy of the protocol body", and a hardcoded copy would silently drift the next time an AI-kit sync pulls an
+    update from the structure repo. Verified against the REAL file, not just a synthetic sample: parametrized
+    tests assert the exact fenced-block count CHEK_PROTOCOL.md actually has for Steps 5/8/9/10/11/12 (1/1/1/2/3/1
+    — checked by hand with `awk` against the live file before writing the assertions, not guessed).
+  - `chek_fleet.py`: `run_fleet_planner()` runs Step 5 as one read-only run_agentic_task call with the extracted
+    planner prompt, and `parse_planner_output()` parses its DOMAIN/PROMPT/SUMMARY output into a FleetSpec. Noted
+    as best-effort (PlannerOutputError on no parseable domains) since, unlike chek_registry.py's strict
+    self-authored format, this parses free-form model output against a template the model might not follow
+    exactly.
+  Critic pass caught a real bug in `find_section()` before it shipped: a bare `.startswith()` prefix match means
+  "STEP 10"/"STEP 11"/"STEP 12"/"STEP 13" all start with the literal string "STEP 1", so `find_section(sections,
+  "STEP 1")` was one dict-ordering coincidence away from silently returning the wrong section — it "worked" only
+  because Step 1 happens to appear before Step 10 in the real file, protecting it by luck rather than by being
+  correct. Proved this two ways: reproduced the wrong-section return with the old logic against a deliberately
+  reordered dict (Step 10 inserted before Step 1), then confirmed the word-boundary fix (`title == prefix or
+  title.startswith(prefix + " ")`) returns the right section regardless of dict order. The obvious "test against
+  the real file" version of this regression test would NOT have caught it — natural document order shields the
+  bug there too — so the real pin is the adversarial-order unit test, not the real-file one (kept anyway, for
+  the block-count coverage above).
+  22 new tests (114 total), all green. Next: Step 6 — parallel checkers per the planner's domain spec, reusing
+  jobs.py's live-status engine (do not build a second one) — then Step 7's coverage check. See LAST_PROMPT.md.
