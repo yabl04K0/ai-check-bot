@@ -14,39 +14,55 @@ ROLE: Continue ai-check-bot. Chat in the user's language; AI docs stay English.
 CONTEXT: two sibling repos exist and are populated: yabl04K0/0000 (private ai-dev-kit structure repo) and
   yabl04K0/1111 (public CHEK-protocol-only mirror — still needs its GitHub visibility flipped to public by hand,
   no API path from this environment can do it). This repo's feature backlog from the doc-porting session is DONE
-  — see PROJECT_MEMORY.md's last two session-log entries for exactly what and how. Do not re-implement any of it;
-  read the log before touching provider/account/job code so you do not duplicate what already exists.
+  — see PROJECT_MEMORY.md's session-log entries for exactly what and how. Do not re-implement any of it; read the
+  log before touching provider/account/job/agent-loop code so you do not duplicate what already exists.
 
-READ FIRST: PROJECT_MEMORY.md (both recent session-log entries in full) -> AI_COMMANDS.md -> latest STATE_LOG.
+READ FIRST: PROJECT_MEMORY.md (all session-log entries about chek_registry/chek_scan/agent_loop in full) ->
+  AI_COMMANDS.md -> latest STATE_LOG.
 
-## STATE: what exists and works (34/34 tests green, `pytest -q`)
-  AIProvider abstraction + ClaudeProvider (probe + run_task), per-account proxy, multi-account pooling via
-  providers/router.py (least-recently-used), scheduled health probes (<=5/day/account, configurable time+message),
-  jobs.py (live status, cooperative cancel for multi-worker loops, REAL asyncio-level cancel for a single call),
-  an inline-keyboard menu (bot.py + keyboards.py, patterns borrowed from sd-forge-bot/MeCelium — see
-  PROJECT_MEMORY.md for which file each pattern came from), and a working "✨ Новая задача" custom-task dispatch
-  end to end (pick account -> run_task -> live status -> cancellable -> result shown, truncated to Telegram's
-  4096-char limit).
+## STATE: what exists and works (91/91 tests green, `pytest -q`)
+  AIProvider abstraction + ClaudeProvider (probe + run_task + run_agentic_task), per-account proxy, multi-account
+  pooling via providers/router.py, scheduled health probes (<=5/day/account), jobs.py (live status, cooperative +
+  real asyncio-level cancel), an inline-keyboard menu (bot.py + keyboards.py), a working "✨ Новая задача" custom-
+  task dispatch, chek_registry.py (Step 1 load + duplicate check, Step 13 append/remove), chek_scan.py (Step 2
+  test runner, Step 4 grep sweep), and — the newest piece — a real tool-use agent loop: agent_tools.py (sandboxed
+  read_file/list_files/grep/edit_file/write_file, Edit-tool-exact unique-match semantics, path-escape blocked) +
+  agent_loop.py (provider-agnostic turn loop, read-only-role enforcement via allowed_tools, unit tested with a
+  scripted fake model) + ClaudeProvider.run_agentic_task (the real Anthropic tool-use adapter).
 
-## GOAL — the one piece big enough to be its own project, not a backlog line item
+## GOAL — Steps 5-12: the actual fleet orchestration, now that the engine exists
 
-Build the actual CHEK audit fleet (README "Режимы аудита", full protocol in CHEK_PROTOCOL.md) driven from the bot:
-  1. A way to point the bot at a target GitHub repo (this repo itself, or another one the user manages) and start
-     a Full/Lite ЧЕК run against it.
-  2. Spawning/monitoring the actual multi-step CHEK_PROTOCOL.md fleet (Steps 1-13) for a provider — start with
-     Claude only, matching what AIProvider already supports; each checker/critic/fixer call is itself a
-     provider.run_task()-shaped call, but the ORCHESTRATION (fleet planning, coverage checks, the convergence
-     loop) is new work, not something jobs.py already does.
-  3. Wire the fleet's live progress through jobs.py (it already renders "which/how many workers active" and
-     supports cancel — reuse it, do not build a second status system) and through GitHub for the actual commit/
-     push at Step 13 (human confirms, per CLAUDE.md's "CRITICAL: human-in-the-loop").
-  4. chek_open.md/chek_never.md/chek_later.md registry read/write from the bot side, per CHEK_PROTOCOL.md Steps 1
-     and 13.
-This is a genuinely large, multi-session effort — plan it before writing code (CLAUDE.md's own feature workflow:
-read everything the feature touches in full before implementing). Do not rush a half version of it; a fake/
-simplified "fleet" that doesn't actually follow CHEK_PROTOCOL.md's roles/gates is worse than not having one, per
-this project's own minimal-code-ladder and CHEK_PROTOCOL.md's FORBIDDEN list (no collapsing the fleet into one
-call, no skipping the coverage check, no agent ever committing).
+Steps 1, 2, 4, and 13's write-back are real. Step 3 (deploy state) and 4b (web research) are legitimately skippable/
+deferrable per the protocol itself when no deploy target or research need exists. What's left is Steps 5-12 —
+CHEK_PROTOCOL.md's own text for each step IS the spec; the prompts quoted there are meant to be pasted close to
+verbatim as `system_prompt`/`user_prompt` to `provider.run_agentic_task(root, system_prompt, user_prompt,
+allowed_tools=..., max_turns=...)`:
+  5. Fleet planner — ONE run_agentic_task call, allowed_tools=agent_loop.READ_ONLY_TOOLS, the Step 5 planner prompt
+     verbatim. Parse its DOMAIN/PROMPT/SUMMARY output into a structured fleet spec (new code — a small parser,
+     similar in spirit to chek_registry.py's parsing but for this different, less strictly-formatted output).
+  6. Fleet checkers — one run_agentic_task call per domain from the planner's spec, IN PARALLEL
+     (`asyncio.gather`), allowed_tools=READ_ONLY_TOOLS, no exceptions. This is the one place jobs.py's
+     multi-worker live-status rendering is exactly what's needed — reuse jobs.create_job/run_workers, do not
+     build a second status system. Coverage check (Step 7) after: Glob vs the union of "Прочитано:" lines each
+     checker's final_text ends with.
+  8. Gap-finder — ONE call, READ_ONLY_TOOLS, the Step 8 prompt with the aggregated Step 7 report pasted in.
+  9. Fixer — ONE call, allowed_tools=agent_loop.ALL_TOOLS (this is the one role allowed to edit), the Step 9
+     prompt. Run chek_scan.run_tests() afterward, not the fixer itself.
+  10. Two critics — TWO run_agentic_task calls IN PARALLEL, READ_ONLY_TOOLS, the two different Step 10 prompts.
+  11. The convergence loop — CHEK_PROTOCOL.md spells out the exact loop (MAX_PER_PROBLEM/MAX_GLOBAL, when to use
+      the cheaper scoped verifier vs the full two critics) — implement it as literally described, do not simplify
+      the oscillation detector away.
+  12. Test-writer — ONE call, ALL_TOOLS, the Step 12 prompt, THEN the mandatory git-stash check (chek_scan.py has
+      no stash helper yet — small addition needed: stash, run_tests, pop, run_tests again, compare).
+  13. Already have the registry write-back (chek_registry.py); still need: showing the human the totals/diff/test
+      result and waiting for explicit confirmation before git add/commit/push (human-in-the-loop, never an agent).
+Model routing per CHEK_PROTOCOL.md: this bot only has Claude, and only one model tier is wired
+(AGENT_MODEL=claude-sonnet-4-5 in providers/claude.py) — decide whether to add a second AGENT_MODEL_OPUS-style
+constant for the planner/critics (protocol says opus) before starting Step 5, since that's a real, visible
+correctness gap otherwise (protocol calls for opus-level judgment on the planner and critics specifically).
+Do not rush a half version of this — a fake/simplified "fleet" that doesn't follow CHEK_PROTOCOL.md's roles/gates
+is worse than not having one, per this project's own minimal-code-ladder and the protocol's own FORBIDDEN list (no
+collapsing the fleet into one call, no skipping the coverage check, no agent ever committing).
 
 ## SMALLER FOLLOW-UPS (worth doing, none of them urgent)
   Codex/Cursor/local-LLM AIProvider implementations — one module + one registry.py line each, per that file's

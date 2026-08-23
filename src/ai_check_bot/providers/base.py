@@ -22,7 +22,15 @@ class TaskResult:
 
 class AIProvider(ABC):
     """One connected account of one AI provider. `proxy_url` is optional and per-account,
-    not global — each account may sit behind its own egress proxy."""
+    not global — each account may sit behind its own egress proxy.
+
+    Optional extension, not part of this ABC: `run_agentic_task(root, system_prompt,
+    user_prompt, allowed_tools, max_turns) -> agent_loop.AgentResult`, the tool-use loop
+    CHEK_PROTOCOL.md's Steps 5-12 roles run through (see providers/claude.py for the one
+    implementation so far). Not abstract here because its shape is genuinely different
+    from probe()/run_task() and a future provider without tool-use support cannot offer
+    it at all — callers check `hasattr`/catch `AttributeError` rather than assuming every
+    provider has it."""
 
     def __init__(self, api_key: str, proxy_url: str | None = None) -> None:
         self.api_key = api_key

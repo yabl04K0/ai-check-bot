@@ -198,3 +198,27 @@ invariants stated in README, not yet enforced by code (enforce when the correspo
   63/63 tests green. Still not started: anything from Steps 5-12 (fleet planner, checkers, fixer, critics — the
   actual agent-loop orchestration). Steps 1, 2, 4, and 13's write-back are now real; Steps 3 (deploy state), 4b
   (web research), and 5-12 remain. See LAST_PROMPT.md.
+
+- 2026-08-23 (same day, later) — built the foundation Steps 5-12 actually need: a real tool-use agent loop, since
+  ai-check-bot runs standalone (not inside Claude Code) and has no "Agent tool" to lean on — it has to implement
+  its own minimal Read/Glob/Grep/Edit loop against the raw Anthropic API.
+  - `agent_tools.py`: sandboxed read_file/list_files/grep/edit_file/write_file, all confined to one project root
+    via path-resolution + ancestry check (PathEscapesRootError) — a real security boundary, not a convenience
+    check, since these calls are driven by model output that can be wrong. edit_file matches Claude Code's own
+    Edit tool contract exactly: old_string must be unique in the file or the call is refused (EditAmbiguousError/
+    EditNotFoundError), never a silent replace-all or a guess.
+  - `agent_loop.py`: the provider-agnostic turn loop (call model -> dispatch any tool_use requests -> feed
+    tool_results back -> repeat until a plain-text answer or max_turns). `call_model` is injected, so the loop's
+    own logic — including CHEK_PROTOCOL.md's read-only-role enforcement (`allowed_tools=READ_ONLY_TOOLS` makes an
+    edit_file call from a checker/critic actually fail, not just get told not to in its prompt) — is fully unit
+    tested with a scripted fake model, no live API calls.
+  - `providers/claude.py` gained `run_agentic_task()`: the real Anthropic tool-use adapter. Deliberately NOT added
+    to the AIProvider ABC (see base.py's docstring) — its shape doesn't fit probe()/run_task(), and a provider
+    without tool-use support genuinely cannot offer it. The response-to-ModelTurn conversion was pulled out of the
+    closure into a standalone `_response_to_model_turn()` specifically so it has its own unit tests against fake
+    SDK response objects, instead of being untestable without a live call (which is why probe()/run_task()
+    themselves still have no direct unit tests, per the earlier session-log note — this one does, because the
+    block-type/tool_use extraction logic is genuinely more complex and worth pinning).
+  28 new tests (91 total), all green. Still not started: the actual Steps 5-12 role prompts/orchestration
+  (planner, checkers, fixer, critics, the convergence loop) that will call run_agentic_task — this session built
+  the engine, not the fleet itself yet.

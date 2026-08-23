@@ -156,13 +156,14 @@ reviewer. NEVER delete a test to make CHEK green.
 
 Setup: `python -m venv venv && source venv/bin/activate && pip install -r requirements-dev.txt`
 Tests: `PYTHONPATH=src pytest -q` (pyproject.toml also sets `pythonpath = ["src"]`, so plain `pytest -q` from the
-  repo root works once the venv is active). Healthy collection as of the last run: 63 tests, all green.
+  repo root works once the venv is active). Healthy collection as of the last run: 91 tests, all green.
 Bot: `PYTHONPATH=src python -m ai_check_bot.bot` (needs `BOT_TOKEN` and `ADMIN_TG_ID` in `.env`; AI-account
   credentials are added at runtime via the bot's own menu, not `.env` — see `src/ai_check_bot/bot.py`).
 Package layout: `src/ai_check_bot/` (src-layout, not a flat package) — `config.py`, `db.py`/`models.py`,
   `providers/` (the `AIProvider` interface + implementations + `router.py` multi-account pooling, registered in
   `providers/registry.py`), `probe_service.py`/`task_service.py` (business logic), `scheduler.py` (APScheduler,
   UTC), `jobs.py` (live-status/cancel job engine), `chek_registry.py` (chek_open/never/later.md parse+rewrite),
-  `chek_scan.py` (CHEK Steps 2/4: test runner, grep sweeps), `ui.py`/`keyboards.py`/`input_flow.py` (bot UI),
-  `bot.py` (Telegram entrypoint).
+  `chek_scan.py` (CHEK Steps 2/4: test runner, grep sweeps), `agent_tools.py` (sandboxed Read/Glob/Grep/Edit/Write
+  for a target project root) + `agent_loop.py` (provider-agnostic tool-use loop — CHEK Steps 5-12's mechanics),
+  `ui.py`/`keyboards.py`/`input_flow.py` (bot UI), `bot.py` (Telegram entrypoint).
 All files UTF-8.
