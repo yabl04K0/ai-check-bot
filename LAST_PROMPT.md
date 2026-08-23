@@ -20,29 +20,33 @@ CONTEXT: two sibling repos exist and are populated: yabl04K0/0000 (private ai-de
 READ FIRST: PROJECT_MEMORY.md (all session-log entries about chek_registry/chek_scan/agent_loop in full) ->
   AI_COMMANDS.md -> latest STATE_LOG.
 
-## STATE: what exists and works (91/91 tests green, `pytest -q`)
+## STATE: what exists and works (129/129 tests green, `pytest -q`)
   AIProvider abstraction + ClaudeProvider (probe + run_task + run_agentic_task), per-account proxy, multi-account
   pooling via providers/router.py, scheduled health probes (<=5/day/account), jobs.py (live status, cooperative +
-  real asyncio-level cancel), an inline-keyboard menu (bot.py + keyboards.py), a working "✨ Новая задача" custom-
-  task dispatch, chek_registry.py (Step 1 load + duplicate check, Step 13 append/remove), chek_scan.py (Step 2
-  test runner, Step 4 grep sweep), and — the newest piece — a real tool-use agent loop: agent_tools.py (sandboxed
-  read_file/list_files/grep/edit_file/write_file, Edit-tool-exact unique-match semantics, path-escape blocked) +
-  agent_loop.py (provider-agnostic turn loop, read-only-role enforcement via allowed_tools, unit tested with a
-  scripted fake model) + ClaudeProvider.run_agentic_task (the real Anthropic tool-use adapter).
+  real asyncio-level cancel + `run_workers_parallel` for genuine concurrency), an inline-keyboard menu (bot.py +
+  keyboards.py), a working "✨ Новая задача" custom-task dispatch, chek_registry.py (Step 1 load + duplicate
+  check, Step 13 append/remove), chek_scan.py (Step 2 test runner, Step 4 grep sweep), a real tool-use agent loop
+  (agent_tools.py sandboxed file tools + agent_loop.py provider-agnostic turn loop + ClaudeProvider.
+  run_agentic_task), and — the newest pieces — chek_protocol_text.py (extracts step sections/prompts from
+  CHEK_PROTOCOL.md at runtime, never a hardcoded copy) and chek_fleet.py's Step 5 (run_fleet_planner,
+  parse_planner_output -> FleetSpec) AND Step 6 (run_checkers: launches every domain checker from a FleetSpec
+  CONCURRENTLY via jobs.run_workers_parallel, parse_checker_output -> CheckerReport per domain, a domain whose
+  output fails to parse still ends up in the result dict with .error set — never silently dropped).
 
-## GOAL — Steps 6-12: the actual fleet orchestration, now that the engine AND the planner exist
+## GOAL — Steps 7-12: aggregation onward, now that the engine, planner, AND checkers exist
 
-Steps 1, 2, 4, 5, and 13's write-back are real (chek_registry.py, chek_scan.py, chek_fleet.py — read
-chek_fleet.run_fleet_planner/parse_planner_output/FleetSpec before writing Step 6, its output is Step 6's input).
-Prompts for Steps 6/8/9/10/11/12 should come from chek_protocol_text.py the same way chek_fleet.py's planner does
-(extract_fenced_blocks on find_section(sections, "STEP N")) — do NOT hardcode a second copy of any of them.
-Step 3 (deploy state) and 4b (web research) are legitimately skippable/deferrable per the protocol itself when no
-deploy target or research need exists. What's left:
-  6. Fleet checkers — one run_agentic_task call per domain from chek_fleet.FleetSpec.domains, IN PARALLEL
-     (`asyncio.gather`), allowed_tools=READ_ONLY_TOOLS, no exceptions. This is the one place jobs.py's
-     multi-worker live-status rendering is exactly what's needed — reuse jobs.create_job/run_workers, do not
-     build a second status system. Coverage check (Step 7) after: Glob vs the union of "Прочитано:" lines each
-     checker's final_text ends with.
+Steps 1, 2, 4, 5, 6, and 13's write-back are real. Read chek_fleet.py's FleetSpec/CheckerReport/run_checkers before
+writing Step 7 — its input is exactly Step 6's output (`dict[str, CheckerReport]`). Prompts for Steps 8/9/10/11/12
+should come from chek_protocol_text.py the same way chek_fleet.py's Step 5/6 do (extract_fenced_blocks on
+find_section(sections, "STEP N")) — do NOT hardcode a second copy of any of them. Step 3 (deploy state) and 4b
+(web research) are legitimately skippable/deferrable per the protocol itself when no deploy target or research
+need exists. What's left:
+  7. Aggregation — NOT an agent call, pure orchestrator logic (chek_fleet.py, alongside run_checkers): (a) the
+     MANDATORY coverage check — agent_tools.list_files(root) vs the union of every CheckerReport.files_read
+     (a failed/errored report's files never got read, so they correctly show as uncovered); (b) merge + dedupe
+     findings across all CheckerReports, sort by severity, carry forward chek_open.md's existing entries with
+     passes_life+=1 (chek_registry.parse already gives you those). Produces the Step 7 report shape
+     CHEK_PROTOCOL.md documents — building the exact text is a small, testable formatting function.
   8. Gap-finder — ONE call, READ_ONLY_TOOLS, the Step 8 prompt with the aggregated Step 7 report pasted in.
   9. Fixer — ONE call, allowed_tools=agent_loop.ALL_TOOLS (this is the one role allowed to edit), the Step 9
      prompt. Run chek_scan.run_tests() afterward, not the fixer itself.

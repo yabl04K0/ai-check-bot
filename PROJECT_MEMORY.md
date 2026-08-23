@@ -248,3 +248,28 @@ invariants stated in README, not yet enforced by code (enforce when the correspo
   the block-count coverage above).
   22 new tests (114 total), all green. Next: Step 6 — parallel checkers per the planner's domain spec, reusing
   jobs.py's live-status engine (do not build a second one) — then Step 7's coverage check. See LAST_PROMPT.md.
+
+- 2026-08-23 (same day, later still) — Step 6, the fleet checkers, is real: `chek_fleet.run_checkers()`.
+  - jobs.py gained `run_workers_parallel()`: CHEK_PROTOCOL.md Step 6 is explicit — "MANDATORY: launch ALL agents
+    from the fleet spec IN ONE MESSAGE" — which is genuine parallelism, not what the existing `run_workers()`
+    does (sequential on purpose, for hammering a real external API gently). Running N checkers one after another
+    would multiply wall-clock time by N for no reason, since domains are independent by design. Proved the new
+    function is ACTUALLY concurrent, not just claimed to be, with an `asyncio.Barrier(2)` test: two workers only
+    proceed past the barrier once BOTH have reached it, which is only possible if they are genuinely running at
+    the same time — a sequential implementation would hang and the test would time out.
+  - `chek_fleet.py`: `parse_checker_output()` parses Step 6 rules 7/10's format (`SEVERITY file:line — description`
+    lines + a final `Прочитано:`/`Read:` line); `get_checker_common_rules()`/`build_checker_prompt()` compose each
+    domain's own prompt (from the Step 5 planner) with Step 6's common tail (extracted from CHEK_PROTOCOL.md, not
+    duplicated) and the Step 1 suppression block; `run_checkers()` wires it all through
+    `jobs.run_workers_parallel`.
+  Critic pass + a test caught a real bug before it shipped, not after: the first version silently DROPPED a
+  domain from the returned `reports` dict whenever its output failed to parse (the exception happened before the
+  line that populates `reports[name]`, so `jobs.run_workers_parallel`'s own generic failure handling marked the
+  *Job*'s worker as failed, but the `reports` dict — the actual thing Step 7 will aggregate — never got an entry
+  for it). That directly contradicted this function's own docstring ("not silently dropped from the fleet"). A
+  test asserting the wrong-but-then-current behavior (`"core" not in reports`) made the mismatch obvious while
+  writing it — the fix was to add `CheckerReport.error` and populate `reports[name]` from inside the except
+  block before re-raising, so every domain the planner specified ends up in `reports` one way or another.
+  15 new tests (129 total), all green. Next: Step 7 — aggregate the CheckerReports, the mechanical coverage check
+  (Glob vs the union of every report's files_read, including failed ones — their files count as uncovered), then
+  Step 8 (gap-finder). See LAST_PROMPT.md.

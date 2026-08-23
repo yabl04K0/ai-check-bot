@@ -57,6 +57,65 @@ async def test_cancel_stops_remaining_workers():
     jobs.drop_job(job.id)
 
 
+async def test_run_workers_parallel_actually_runs_concurrently():
+    # If this ran sequentially, worker "b" could not finish before "a" starts waiting —
+    # but here both reach the barrier and only THEN proceed, which is only possible if
+    # they are genuinely running at the same time, not one after another.
+    job = jobs.create_job("t", ["a", "b"])
+    barrier = asyncio.Barrier(2)
+
+    async def run_one(name):
+        await barrier.wait()
+        return "ok"
+
+    async def on_progress(j):
+        pass
+
+    await asyncio.wait_for(
+        jobs.run_workers_parallel(job, ["a", "b"], run_one, on_progress=on_progress), timeout=2
+    )
+    assert job.workers["a"].state == "done"
+    assert job.workers["b"].state == "done"
+    jobs.drop_job(job.id)
+
+
+async def test_run_workers_parallel_isolates_failures():
+    job = jobs.create_job("t", ["ok", "bad"])
+
+    async def run_one(name):
+        if name == "bad":
+            raise RuntimeError("boom")
+        return "fine"
+
+    async def on_progress(j):
+        pass
+
+    await jobs.run_workers_parallel(job, ["ok", "bad"], run_one, on_progress=on_progress)
+    assert job.workers["ok"].state == "done"
+    assert job.workers["bad"].state == "failed"
+    assert "boom" in job.workers["bad"].detail
+    jobs.drop_job(job.id)
+
+
+async def test_run_workers_parallel_pre_cancelled_skips_all():
+    job = jobs.create_job("t", ["a", "b"])
+    job.cancel_requested = True
+    started = []
+
+    async def run_one(name):
+        started.append(name)
+        return "ok"
+
+    async def on_progress(j):
+        pass
+
+    await jobs.run_workers_parallel(job, ["a", "b"], run_one, on_progress=on_progress)
+    assert started == []
+    assert job.workers["a"].state == "cancelled"
+    assert job.workers["b"].state == "cancelled"
+    jobs.drop_job(job.id)
+
+
 def test_push_interjection_unknown_job_returns_false():
     assert jobs.push_interjection("does-not-exist", "hi") is False
 

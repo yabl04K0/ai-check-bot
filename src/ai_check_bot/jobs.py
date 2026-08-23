@@ -129,6 +129,44 @@ async def run_workers(
         await on_progress(job)
 
 
+async def run_workers_parallel(
+    job: Job,
+    worker_names: list[str],
+    run_one,
+    *,
+    on_progress,
+) -> None:
+    """Like run_workers, but launches every worker CONCURRENTLY (asyncio.gather) instead
+    of one at a time. run_workers is sequential on purpose for calls that hit a real
+    external API where hammering all of them at once is undesirable; CHEK_PROTOCOL.md
+    Step 6 is the opposite case — it is MANDATORY to launch every fleet checker "IN ONE
+    MESSAGE" (parallel), because the checkers are independent by design and running N of
+    them one after another would multiply wall-clock time by N for no benefit.
+    Cancellation here is checked only before a worker STARTS (not queued workers waiting
+    behind an in-flight one, since there is no queue — they all start together); a
+    worker already running is not interrupted mid-flight by this function. For a single
+    call that must be interruptible mid-flight, use jobs.attach_task/request_cancel
+    instead (see bot.py's custom-task handler), not this."""
+
+    async def run_with_status(name: str) -> None:
+        if job.cancel_requested:
+            job.workers[name].state = "cancelled"
+            await on_progress(job)
+            return
+        job.workers[name].state = "running"
+        await on_progress(job)
+        try:
+            detail = await run_one(name)
+            job.workers[name].state = "done"
+            job.workers[name].detail = detail or ""
+        except Exception as exc:  # a worker failing must not abort the rest of the fleet
+            job.workers[name].state = "failed"
+            job.workers[name].detail = str(exc)
+        await on_progress(job)
+
+    await asyncio.gather(*(run_with_status(name) for name in worker_names))
+
+
 async def debounced_editor(edit_fn, *, min_interval: float = 1.0):
     """Wrap a Telegram edit call so rapid worker updates collapse into at most one edit
     per `min_interval` seconds — Telegram rate-limits edit_message_text per chat, and a
