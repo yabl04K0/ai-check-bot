@@ -183,5 +183,18 @@ invariants stated in README, not yet enforced by code (enforce when the correspo
   back to the dataclass default, which is also 0) — added a test that inspects the raw serialized YAML text
   directly, not just the value after re-parsing, to actually pin the `v not in (None, [], "")` filter (not
   `if v` truthiness) that makes zero survive.
-  50/50 tests green (`pytest -q`). Not committed yet at time of writing this entry — see STATE_LOG.md /
-  git log for whether it landed.
+  50/50 tests green (`pytest -q`). Committed as 848cd5b.
+
+- 2026-08-23 — continued the CHEK fleet groundwork: `chek_scan.py` implements Step 2 (derive and run the target
+  project's test command — pytest/npm/cargo/go, in that detection order; parses pytest's "N passed"/"N failed"
+  summary specifically, other ecosystems get `ran=True` with `passed=failed=None` and the real output tail rather
+  than a guessed/wrong parse) and Step 4 (grep sweep — pure Python re + rglob, no external grep/ripgrep dependency,
+  so it behaves identically regardless of what's on the host running the bot). Tests for run_tests() spin up a
+  REAL tiny pytest project in tmp_path and run it as a subprocess rather than mocking subprocess.run — genuine
+  integration coverage of the parsing logic against real pytest output, not a guess at its format.
+  Critic pass fixed two small things before they became real problems: an unused `field` import left over from an
+  earlier draft, and `grep_sweep` computing `path.relative_to(project_path)` twice per file (once for the
+  exclude-dir check, once for the hit record) — now computed once and reused.
+  63/63 tests green. Still not started: anything from Steps 5-12 (fleet planner, checkers, fixer, critics — the
+  actual agent-loop orchestration). Steps 1, 2, 4, and 13's write-back are now real; Steps 3 (deploy state), 4b
+  (web research), and 5-12 remain. See LAST_PROMPT.md.
