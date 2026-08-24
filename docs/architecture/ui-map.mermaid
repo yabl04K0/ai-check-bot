@@ -21,7 +21,7 @@ flowchart TD
     MAIN --> BTN_ADMIN["👑 Админка"]
 
     %% ==== ВЫБОР ПРОЕКТА ====
-    BTN_PROJ --> PROJLIST["AutoPost · MeCelium · sd-forge-bot\nserver-monitor · AutoPostCheck\n🤖 этот-же-бот (self-check)\nтап = чекбокс · ⚙️ = настройки\n+ Добавить проект / Удалить"]
+    BTN_PROJ --> PROJLIST["Проект A · Проект B · Проект C\nПроект D · Проект E\n🤖 этот-же-бот (self-check)\nтап = чекбокс · ⚙️ = настройки\n+ Добавить проект / Удалить"]
     PROJLIST -->|"чекбокс(ы) + Далее"| SELPROJ1
     PROJLIST -->|"⚙️ у конкретного проекта"| PSET
     PROJLIST -.- SELFNOTE["⚠️ Self-check нюанс: если фикс правит код\nсамого бота — рестарт применяет патч,\nно ломает текущий прогон.\nРекомендация: self-check фиксит,\nно НЕ автопушит без ручного подтверждения\nдаже если это разрешено для других проектов"]
@@ -72,7 +72,7 @@ flowchart TD
 
     %% ==== ФИКС-ВЕТКА ====
     ACT1 --> FIXPROG["📊 Фикс + критики ×2 (Opus)\n▓▓▓▓░░░░░░ 40%\nШаг 10/13: critic-A + critic-B"]
-    FIXPROG -.если проект = сам бот.-> SELFNOTE["⚠️ Self-check: после коммита\nбот сам себя не перезапустит\nсредствами Python —\nнужен внешний supervisor\n(exit-код + auto-restart loop,\nкак start.bat в sd-forge-bot)"]
+    FIXPROG -.если проект = сам бот.-> SELFNOTE["⚠️ Self-check: после коммита\nбот сам себя не перезапустит\nсредствами Python —\nнужен внешний supervisor\n(exit-код + auto-restart loop,\nсм. scripts/supervise.sh)"]
     SELFNOTE --> COMMIT
     ACT1L --> FIXPROG
 

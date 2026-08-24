@@ -5,7 +5,7 @@ flowchart TB
         E3["🐙 GitHub webhook (опц.)\nновый issue → предложить ЧЕК"]
     end
 
-    subgraph QUEUE["ОЧЕРЕДЬ ЗАДАЧ — SQLite-таблица jobs, как в AutoPost scheduler"]
+    subgraph QUEUE["ОЧЕРЕДЬ ЗАДАЧ — SQLite-таблица jobs"]
         Q1["Новая задача → INSERT в jobs\nстатус: queued"]
         Q2{"Уже что-то\nвыполняется?"}
         Q3["Показать позицию в очереди\nпользователю"]

@@ -157,7 +157,7 @@ class JobProject(Base):
 
 
 class Job(Base):
-    """Запись очереди задач — таблица jobs, как в AutoPost scheduler."""
+    """Запись очереди задач — таблица jobs."""
 
     __tablename__ = "jobs"
 

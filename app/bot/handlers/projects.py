@@ -21,7 +21,7 @@ from app.tasks.project_context import local_path as project_local_path
 
 ADD_PROJECT_PROMPT = (
     "Отправь одной строкой: `Имя проекта; owner/repo` "
-    "(например: `AutoPost; myuser/autopost`).\n"
+    "(например: `Мой проект; owner/repo`).\n"
     "Локальный путь для чекаута можно добавить третьим полем через `;`."
 )
 
