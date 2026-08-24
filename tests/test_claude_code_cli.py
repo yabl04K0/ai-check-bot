@@ -8,6 +8,7 @@ app.providers.claude.ClaudeProvider). Проверяет: статус без р
 from __future__ import annotations
 
 import json
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -171,6 +172,35 @@ def test_json_401_auth_error_stays_generic_not_quota(monkeypatch):
         "app.providers.claude_code_cli.subprocess.run", _fake_run(returncode=1, stdout=body)
     )
     provider = ClaudeCodeCliProvider("claude", oauth_token="sk-bad-token")
+    with pytest.raises(ProviderError) as exc_info:
+        provider.run_prompt("привет")
+    assert not isinstance(exc_info.value, ProviderQuotaExceededError)
+
+
+def test_subprocess_timeout_treated_as_quota_exceeded(monkeypatch):
+    """Подтверждено вживую: реальный лимит подписки — claude -p не всегда
+    отдаёт чистую 429-ошибку, иногда просто виснет без ответа до таймаута.
+    Раньше это уходило generic ProviderError (job падал насовсем), теперь
+    — ProviderQuotaExceededError (HANDOVER: пауза + автопродолжение)."""
+
+    def _timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="claude", timeout=600)
+
+    monkeypatch.setattr("app.providers.claude_code_cli.subprocess.run", _timeout)
+    provider = ClaudeCodeCliProvider("claude", oauth_token="sk-token")
+    with pytest.raises(ProviderQuotaExceededError):
+        provider.run_prompt("привет")
+
+
+def test_subprocess_oserror_stays_generic_not_quota(monkeypatch):
+    """OSError (бинарник не найден, нет прав и т.п.) — это не про лимит,
+    ждать тут нечего, HANDOVER-пауза была бы неправильной."""
+
+    def _boom(*args, **kwargs):
+        raise OSError("claude.exe not found")
+
+    monkeypatch.setattr("app.providers.claude_code_cli.subprocess.run", _boom)
+    provider = ClaudeCodeCliProvider("claude", oauth_token="sk-token")
     with pytest.raises(ProviderError) as exc_info:
         provider.run_prompt("привет")
     assert not isinstance(exc_info.value, ProviderQuotaExceededError)

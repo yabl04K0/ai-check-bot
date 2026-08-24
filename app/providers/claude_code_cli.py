@@ -188,7 +188,17 @@ class ClaudeCodeCliProvider(AIProvider):
                     timeout=600,
                     env=env,
                 )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except subprocess.TimeoutExpired as exc:
+            # claude -p не всегда отдаёт чистую 429-ошибку на реальном
+            # лимите подписки — иногда просто зависает без ответа до
+            # таймаута (подтверждено вживую: аккаунт был на лимите, CLI
+            # молчал все 600с вместо быстрой ошибки). Раньше это уходило
+            # generic ProviderError, HANDOVER-пауза не срабатывала — job
+            # падал насовсем вместо того, чтобы подождать сброса лимита.
+            raise ProviderQuotaExceededError(
+                f"{self.name.value}: похоже на лимит (CLI завис без ответа {exc.timeout}с): {exc}"
+            ) from exc
+        except OSError as exc:
             raise ProviderError(f"{self.name.value} CLI error: {exc}") from exc
 
         output = result.stdout.strip()
