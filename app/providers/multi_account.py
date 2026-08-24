@@ -29,3 +29,15 @@ def run_with_account_fallback(
             last_error = exc
     assert last_error is not None  # credentials non-empty ⇒ хотя бы одна попытка была
     raise last_error
+
+
+def label_credentials(primary: str | None, extra_accounts: Sequence[str]) -> list[tuple[str, str]]:
+    """(account_label, secret) в порядке перебора — "primary" первым (если
+    задан), потом "extra:1", "extra:2"... по порядку добавления
+    (app.providers.accounts_store). Метка идёт в QuotaUsageLog.account_label
+    — чтобы "лимиты по аккаунтам" в UI знали, кто именно потратил токены."""
+    pairs: list[tuple[str, str]] = []
+    if primary:
+        pairs.append(("primary", primary))
+    pairs.extend((f"extra:{i}", secret) for i, secret in enumerate(extra_accounts, start=1))
+    return pairs

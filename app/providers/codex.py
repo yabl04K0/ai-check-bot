@@ -24,7 +24,7 @@ from app.providers.base import (
     RunOptions,
 )
 from app.providers.cli_login import run_cli_login
-from app.providers.multi_account import run_with_account_fallback
+from app.providers.multi_account import label_credentials, run_with_account_fallback
 from app.providers.quota import QuotaTracker
 
 DEFAULT_MODEL = "gpt-4.1"
@@ -94,13 +94,16 @@ class CodexProvider(AIProvider):
 
     def run_prompt(self, prompt: str, options: RunOptions | None = None) -> ProviderResult:
         options = options or RunOptions()
+        pairs = label_credentials(self._api_key, self._extra_accounts)
         return run_with_account_fallback(
-            self._all_credentials(),
-            lambda api_key: self._run_once(api_key, prompt, options),
+            pairs,
+            lambda pair: self._run_once(pair[1], prompt, options, account_label=pair[0]),
             not_configured_hint="OPENAI_API_KEY не задан — залогинься в Настройках → 🔌 Провайдеры ИИ.",
         )
 
-    def _run_once(self, api_key: str, prompt: str, options: RunOptions) -> ProviderResult:
+    def _run_once(
+        self, api_key: str, prompt: str, options: RunOptions, *, account_label: str | None = None
+    ) -> ProviderResult:
         messages = []
         if options.system:
             messages.append({"role": "system", "content": options.system})
@@ -135,6 +138,7 @@ class CodexProvider(AIProvider):
             model=data.get("model"),
             input_tokens=usage.get("prompt_tokens", 0),
             output_tokens=usage.get("completion_tokens", 0),
+            account_label=account_label,
         )
         return ProviderResult(
             text=choice,

@@ -18,6 +18,7 @@ def main_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📁 Проекты", callback_data="menu:projects")],
         [InlineKeyboardButton("📜 Реестр (все)", callback_data="menu:registry")],
         [InlineKeyboardButton("🕘 История ЧЕКов", callback_data="menu:history")],
+        [InlineKeyboardButton("📊 Лимиты", callback_data="menu:limits")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="menu:settings")],
         [InlineKeyboardButton("🐙 GitHub", callback_data="menu:github")],
         [InlineKeyboardButton("👑 Админка", callback_data="menu:admin")],

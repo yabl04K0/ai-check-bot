@@ -103,6 +103,15 @@ class ClaudeCodeCliProvider(AIProvider):
             primary.append(_LOCAL_SESSION)
         return primary + self._extra_accounts
 
+    def _labeled_credentials(self) -> list[tuple[str, str]]:
+        pairs: list[tuple[str, str]] = []
+        if self._oauth_token:
+            pairs.append(("primary", self._oauth_token))
+        elif _local_session_exists():
+            pairs.append(("primary", _LOCAL_SESSION))
+        pairs += [(f"extra:{i}", s) for i, s in enumerate(self._extra_accounts, start=1)]
+        return pairs
+
     def supports_key_entry(self) -> bool:
         return True
 
@@ -138,15 +147,17 @@ class ClaudeCodeCliProvider(AIProvider):
             )
         options = options or RunOptions()
         return run_with_account_fallback(
-            self._all_credentials(),
-            lambda credential: self._run_once(credential, prompt, options),
+            self._labeled_credentials(),
+            lambda pair: self._run_once(pair[1], prompt, options, account_label=pair[0]),
             not_configured_hint=(
                 f"{self.name.value}: не залогинен — запусти `claude` или `claude setup-token` "
                 "в терминале на этой машине."
             ),
         )
 
-    def _run_once(self, credential: str, prompt: str, options: RunOptions) -> ProviderResult:
+    def _run_once(
+        self, credential: str, prompt: str, options: RunOptions, *, account_label: str | None = None
+    ) -> ProviderResult:
         # Промпт — через stdin, не как аргумент командной строки: Windows
         # ограничивает длину командной строки процесса (~32K символов), а
         # промпты Full ЧЕК (отчёты, найденные проблемы) легко превышают
@@ -201,7 +212,9 @@ class ClaudeCodeCliProvider(AIProvider):
         usage = data.get("usage") or {}
         input_tokens = usage.get("input_tokens", 0)
         output_tokens = usage.get("output_tokens", 0)
-        self._quota_tracker.record(model=None, input_tokens=input_tokens, output_tokens=output_tokens)
+        self._quota_tracker.record(
+            model=None, input_tokens=input_tokens, output_tokens=output_tokens, account_label=account_label
+        )
 
         return ProviderResult(
             text=data.get("result", ""),

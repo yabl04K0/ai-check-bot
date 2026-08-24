@@ -11,7 +11,7 @@ from app.providers.base import (
     ProviderResult,
     RunOptions,
 )
-from app.providers.multi_account import run_with_account_fallback
+from app.providers.multi_account import label_credentials, run_with_account_fallback
 from app.providers.quota import QuotaTracker
 
 DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
@@ -59,13 +59,16 @@ class ClaudeProvider(AIProvider):
 
     def run_prompt(self, prompt: str, options: RunOptions | None = None) -> ProviderResult:
         options = options or RunOptions()
+        pairs = label_credentials(self._api_key, self._extra_accounts)
         return run_with_account_fallback(
-            self._all_credentials(),
-            lambda api_key: self._run_once(api_key, prompt, options),
+            pairs,
+            lambda pair: self._run_once(pair[1], prompt, options, account_label=pair[0]),
             not_configured_hint="ANTHROPIC_API_KEY не задан — залогинься в Настройках → 🔌 Провайдеры ИИ.",
         )
 
-    def _run_once(self, api_key: str, prompt: str, options: RunOptions) -> ProviderResult:
+    def _run_once(
+        self, api_key: str, prompt: str, options: RunOptions, *, account_label: str | None = None
+    ) -> ProviderResult:
         import anthropic  # локальный импорт: не тянуть SDK, если провайдер не используется
 
         client = anthropic.Anthropic(api_key=api_key)
@@ -93,6 +96,7 @@ class ClaudeProvider(AIProvider):
             model=message.model,
             input_tokens=message.usage.input_tokens,
             output_tokens=message.usage.output_tokens,
+            account_label=account_label,
         )
         return ProviderResult(
             text=text,

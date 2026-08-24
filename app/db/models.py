@@ -295,12 +295,17 @@ class GithubTokenState(Base):
 
 
 class QuotaUsageLog(Base):
-    """Собственная оценка расхода квоты по провайдеру/модели (нет офиц. API)."""
+    """Собственная оценка расхода квоты по провайдеру/модели (нет офиц. API —
+    ни у Anthropic API, ни тем более у подписки Claude Code, см. auth.py
+    докстринг claude_code_cli). account_label различает несколько аккаунтов
+    одного провайдера ("primary" / "extra:<id>") — None для провайдеров без
+    мультиаккаунтов (обратная совместимость со старыми записями)."""
 
     __tablename__ = "quota_usage_log"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     provider: Mapped[ProviderName] = mapped_column(_enum_type(ProviderName, 32))
+    account_label: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)

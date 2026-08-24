@@ -3,7 +3,32 @@
 from __future__ import annotations
 
 from app.db.models import Job, JobStatus
+from app.providers.quota import account_usage_summary
 from app.tasks.types import TASK_TYPE_LABELS
+
+
+def _fmt_tokens(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(n)
+
+
+def _limits_line(job: Job) -> str:
+    """Самооценка расхода токенов текущего провайдера за 5ч/неделю — не %
+    от Anthropic (такого API нет), просто то, что бот сам отправил, см.
+    app.providers.quota.account_usage_summary."""
+    if not job.provider:
+        return ""
+    summary = account_usage_summary(job.provider)
+    if not summary:
+        return ""
+    parts = [
+        f"{label or 'default'}: 5ч {_fmt_tokens(five_h)}/нед {_fmt_tokens(week)}"
+        for label, (five_h, week) in sorted(summary.items(), key=lambda kv: kv[0] or "")
+    ]
+    return f"\n💳 {job.provider.value} — " + ", ".join(parts)
 
 
 def _bar(step: int, total: int, width: int = 10) -> str:
@@ -25,6 +50,7 @@ def render_progress(job: Job) -> str:
         f"📊 ПРОГРЕСС — {label}\n"
         f"{bar} {pct}%\n"
         f"Шаг {job.progress_step}/{job.progress_total}: {step_label}"
+        f"{_limits_line(job)}"
     )
 
 
