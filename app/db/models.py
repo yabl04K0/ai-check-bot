@@ -58,6 +58,14 @@ class TaskType(str, enum.Enum):
 
 class ProviderName(str, enum.Enum):
     CLAUDE = "claude"
+    # Claude Code CLI (см. app.providers.claude_code_cli) — исполнение через
+    # `claude -p` на подписке Max/Pro, а не через ANTHROPIC_API_KEY/
+    # метрируемый API, как у CLAUDE выше. Основной слот без отдельного
+    # токена берёт обычную интерактивную сессию `claude` на этой машине
+    # (~/.claude/.credentials.json); дополнительные аккаунты (см.
+    # ➕ Добавить ещё аккаунт в Настройках, ProviderCredential ниже) —
+    # всегда через CLAUDE_CODE_OAUTH_TOKEN (см. `claude setup-token`).
+    CLAUDE_CODE = "claude_code"
     CODEX = "codex"
     CURSOR = "cursor"
     LOCAL_LLM = "local_llm"
@@ -253,6 +261,24 @@ class ProviderAccount(Base):
     )
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ProviderCredential(Base):
+    """Дополнительные аккаунты сверх основного слота (.env/🔑 Ключ) —
+    "➕ Добавить ещё аккаунт" в ⚙️ Настройки → 🔌 Провайдеры ИИ. Основной
+    слот на провайдера остаётся один (app.providers.key_store, тот же
+    паттерн, что у GitHub-токена) — тут произвольное количество ДОПОЛНИТЕЛЬНЫХ
+    секретов, перебираемых по порядку при ошибке/квоте, см.
+    app.providers.multi_account.run_with_account_fallback. Секреты — те же
+    строки, что API-ключ/CLAUDE_CODE_OAUTH_TOKEN, никогда не логируются
+    целиком (см. app/bot/handlers/settings_admin.py — в UI только маска)."""
+
+    __tablename__ = "provider_credentials"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[ProviderName] = mapped_column(_enum_type(ProviderName, 32), index=True)
+    secret: Mapped[str] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class GithubTokenState(Base):

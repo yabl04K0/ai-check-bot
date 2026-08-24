@@ -33,8 +33,13 @@ _EXTRA_FALLBACK = [
 # Чек (Full) — штатный флот-протокол заточен под Claude; Lite — легче,
 # локалка и Groq (LPU, очень низкая задержка) как scout вытягивают первыми,
 # чтобы экономить платную квоту тяжёлых провайдеров.
+# Claude Code CLI (подписка Max/Pro, флэт-рейт, может держать несколько
+# аккаунтов — см. app.providers.claude_code_cli) — перед метрируемым CLAUDE
+# (ANTHROPIC_API_KEY): дешевле гонять на подписке, пока не исчерпана/не
+# подключена, и только потом платить за токены.
 DEFAULT_PRIORITY: dict[TaskType, list[ProviderName]] = {
     TaskType.CHECK_FULL: [
+        ProviderName.CLAUDE_CODE,
         ProviderName.CLAUDE,
         ProviderName.CODEX,
         ProviderName.CURSOR,
@@ -44,14 +49,34 @@ DEFAULT_PRIORITY: dict[TaskType, list[ProviderName]] = {
         ProviderName.LOCAL_LLM,
         ProviderName.GROQ,
         ProviderName.CEREBRAS,
+        ProviderName.CLAUDE_CODE,
         ProviderName.CLAUDE,
         ProviderName.CODEX,
         *_EXTRA_FALLBACK,
     ],
-    TaskType.FEATURE: [ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.CODEX, *_EXTRA_FALLBACK],
-    TaskType.FIX: [ProviderName.CURSOR, ProviderName.CLAUDE, ProviderName.CODEX, *_EXTRA_FALLBACK],
-    TaskType.REFACTOR: [ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.CODEX, *_EXTRA_FALLBACK],
+    TaskType.FEATURE: [
+        ProviderName.CLAUDE_CODE,
+        ProviderName.CLAUDE,
+        ProviderName.CURSOR,
+        ProviderName.CODEX,
+        *_EXTRA_FALLBACK,
+    ],
+    TaskType.FIX: [
+        ProviderName.CURSOR,
+        ProviderName.CLAUDE_CODE,
+        ProviderName.CLAUDE,
+        ProviderName.CODEX,
+        *_EXTRA_FALLBACK,
+    ],
+    TaskType.REFACTOR: [
+        ProviderName.CLAUDE_CODE,
+        ProviderName.CLAUDE,
+        ProviderName.CURSOR,
+        ProviderName.CODEX,
+        *_EXTRA_FALLBACK,
+    ],
     TaskType.CUSTOM: [
+        ProviderName.CLAUDE_CODE,
         ProviderName.CLAUDE,
         ProviderName.CODEX,
         ProviderName.CURSOR,

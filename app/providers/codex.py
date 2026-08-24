@@ -19,12 +19,12 @@ from app.providers.base import (
     AuthStatus,
     LoginResult,
     ProviderError,
-    ProviderNotAuthenticatedError,
     ProviderQuotaExceededError,
     ProviderResult,
     RunOptions,
 )
 from app.providers.cli_login import run_cli_login
+from app.providers.multi_account import run_with_account_fallback
 from app.providers.quota import QuotaTracker
 
 DEFAULT_MODEL = "gpt-4.1"
@@ -32,7 +32,12 @@ CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 
 
 class CodexProvider(AIProvider):
-    """Вызывает OpenAI Chat Completions API напрямую через httpx."""
+    """Вызывает OpenAI Chat Completions API напрямую через httpx.
+
+    Один основной ключ (.env/🔑 Ключ) + произвольно много дополнительных
+    аккаунтов ("➕ Добавить ещё аккаунт", см. app.providers.accounts_store) —
+    перебираются по порядку, следующий пробуется только при ошибке/квоте
+    текущего (см. app.providers.multi_account)."""
 
     name = ProviderName.CODEX
 
@@ -41,14 +46,22 @@ class CodexProvider(AIProvider):
         api_key: str | None,
         quota_tracker: QuotaTracker | None = None,
         cli_path: str | None = None,
+        *,
+        extra_accounts: list[str] | None = None,
     ) -> None:
         self._api_key = api_key
+        self._extra_accounts = list(extra_accounts or [])
         self._cli_path = cli_path
         self._quota_tracker = quota_tracker or QuotaTracker(ProviderName.CODEX)
 
+    def _all_credentials(self) -> list[str]:
+        return ([self._api_key] if self._api_key else []) + self._extra_accounts
+
     def auth_status(self) -> AuthStatus:
-        if self._api_key:
-            return AuthStatus(status=ProviderAccountStatus.CONNECTED)
+        credentials = self._all_credentials()
+        if credentials:
+            detail = f"{len(credentials)} аккаунта(ов)" if len(credentials) > 1 else None
+            return AuthStatus(status=ProviderAccountStatus.CONNECTED, detail=detail)
         if self._cli_path:
             # Реальный статус CLI-логина не проверяем автоматически (нет
             # надёжной non-interactive команды статуса, см. модульный
@@ -68,12 +81,26 @@ class CodexProvider(AIProvider):
             missing_path_hint="CODEX_CLI_PATH не задан в .env — некуда запускать login.",
         )
 
+    def supports_key_entry(self) -> bool:
+        return True
+
+    def update_api_key(self, api_key: str | None) -> None:
+        self._api_key = api_key
+
+    def set_extra_accounts(self, extra_accounts: list[str]) -> None:
+        """Живое обновление списка доп. аккаунтов, без рестарта процесса —
+        тот же принцип, что у update_api_key."""
+        self._extra_accounts = list(extra_accounts)
+
     def run_prompt(self, prompt: str, options: RunOptions | None = None) -> ProviderResult:
-        if not self._api_key:
-            raise ProviderNotAuthenticatedError(
-                "OPENAI_API_KEY не задан — залогинься в Настройках → 🔌 Провайдеры ИИ."
-            )
         options = options or RunOptions()
+        return run_with_account_fallback(
+            self._all_credentials(),
+            lambda api_key: self._run_once(api_key, prompt, options),
+            not_configured_hint="OPENAI_API_KEY не задан — залогинься в Настройках → 🔌 Провайдеры ИИ.",
+        )
+
+    def _run_once(self, api_key: str, prompt: str, options: RunOptions) -> ProviderResult:
         messages = []
         if options.system:
             messages.append({"role": "system", "content": options.system})
@@ -82,7 +109,7 @@ class CodexProvider(AIProvider):
         try:
             response = httpx.post(
                 CHAT_COMPLETIONS_URL,
-                headers={"Authorization": f"Bearer {self._api_key}"},
+                headers={"Authorization": f"Bearer {api_key}"},
                 json={
                     "model": options.model or DEFAULT_MODEL,
                     "messages": messages,

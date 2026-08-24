@@ -34,32 +34,68 @@ def _fake_response(status_code: int) -> httpx.Response:
     return httpx.Response(status_code, request=request)
 
 
-def test_claude_rate_limit_raises_quota_exceeded():
-    provider = ClaudeProvider("sk-ant-test")
+def test_claude_rate_limit_raises_quota_exceeded(monkeypatch):
     exc = anthropic.RateLimitError("rate limited", response=_fake_response(429), body=None)
-    provider._client = _FakeAnthropicClient(exc)
+    monkeypatch.setattr(anthropic, "Anthropic", lambda api_key: _FakeAnthropicClient(exc))
+    provider = ClaudeProvider("sk-ant-test")
 
     with pytest.raises(ProviderQuotaExceededError):
         provider.run_prompt("привет")
 
 
-def test_claude_overloaded_raises_quota_exceeded():
-    provider = ClaudeProvider("sk-ant-test")
+def test_claude_overloaded_raises_quota_exceeded(monkeypatch):
     exc = anthropic.APIStatusError("overloaded", response=_fake_response(529), body=None)
-    provider._client = _FakeAnthropicClient(exc)
+    monkeypatch.setattr(anthropic, "Anthropic", lambda api_key: _FakeAnthropicClient(exc))
+    provider = ClaudeProvider("sk-ant-test")
 
     with pytest.raises(ProviderQuotaExceededError):
         provider.run_prompt("привет")
 
 
-def test_claude_other_status_error_stays_generic():
-    provider = ClaudeProvider("sk-ant-test")
+def test_claude_other_status_error_stays_generic(monkeypatch):
     exc = anthropic.APIStatusError("server error", response=_fake_response(500), body=None)
-    provider._client = _FakeAnthropicClient(exc)
+    monkeypatch.setattr(anthropic, "Anthropic", lambda api_key: _FakeAnthropicClient(exc))
+    provider = ClaudeProvider("sk-ant-test")
 
     with pytest.raises(ProviderError) as exc_info:
         provider.run_prompt("привет")
     assert not isinstance(exc_info.value, ProviderQuotaExceededError)
+
+
+class _FakeMessage:
+    model = "claude-sonnet-4-5-20250929"
+    content = []
+
+    class usage:  # noqa: N801 — имитирует форму anthropic.types.Usage
+        input_tokens = 1
+        output_tokens = 1
+
+
+class _OkMessages:
+    def create(self, **kwargs):
+        return _FakeMessage()
+
+
+def test_claude_falls_over_to_second_account_on_quota_error(monkeypatch):
+    """Мультиаккаунт: первый аккаунт упирается в квоту — бот сам переходит
+    ко второму, а не падает (см. app.providers.multi_account)."""
+    exc = anthropic.RateLimitError("rate limited", response=_fake_response(429), body=None)
+    calls: list[str] = []
+
+    def _fake_anthropic(api_key: str):
+        calls.append(api_key)
+        client = _FakeAnthropicClient(exc)
+        if api_key == "sk-ant-second":
+            client.messages = _OkMessages()
+        return client
+
+    monkeypatch.setattr(anthropic, "Anthropic", _fake_anthropic)
+    provider = ClaudeProvider("sk-ant-first", extra_accounts=["sk-ant-second"])
+
+    result = provider.run_prompt("привет")
+
+    assert calls == ["sk-ant-first", "sk-ant-second"]
+    assert result.model == "claude-sonnet-4-5-20250929"
 
 
 def _fake_post_returning(status_code: int, json_body: dict | None = None):

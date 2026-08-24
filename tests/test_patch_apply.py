@@ -6,7 +6,15 @@ from app.tasks.patch_apply import apply_patch, clean_patch_text, commit_all, cur
 
 
 def _git(*args: str, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
 
 
 def _init_repo(tmp_path) -> None:
@@ -64,7 +72,13 @@ def test_commit_all_creates_commit(tmp_path):
     assert ok is True, detail
 
     log = subprocess.run(
-        ["git", "log", "-1", "--pretty=%s"], cwd=tmp_path, capture_output=True, text=True, check=True
+        ["git", "log", "-1", "--pretty=%s"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     )
     assert log.stdout.strip() == "add new.txt"
 

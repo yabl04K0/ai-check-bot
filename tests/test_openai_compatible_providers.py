@@ -119,6 +119,22 @@ def test_each_subclass_has_distinct_name_and_base_url():
     assert len(set(base_urls)) == len(base_urls)
 
 
+@pytest.mark.parametrize("provider_cls", ALL_SUBCLASSES)
+def test_supports_key_entry(provider_cls):
+    assert provider_cls(None).supports_key_entry() is True
+
+
+@pytest.mark.parametrize("provider_cls", ALL_SUBCLASSES)
+def test_update_api_key_changes_live_key_and_auth_status(provider_cls):
+    provider = provider_cls(None)
+    assert provider.auth_status().status == ProviderAccountStatus.NOT_CONNECTED
+
+    provider.update_api_key("new-key")
+
+    assert provider._api_key == "new-key"
+    assert provider.auth_status().status == ProviderAccountStatus.CONNECTED
+
+
 def test_model_override_from_settings_is_respected():
     provider = GeminiProvider("k", model="gemini-custom-model")
     assert provider._model == "gemini-custom-model"

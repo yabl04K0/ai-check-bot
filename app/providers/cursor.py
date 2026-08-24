@@ -57,7 +57,12 @@ class CursorProvider(AIProvider):
             )
         try:
             result = subprocess.run(
-                [self._cli_path, "status"], capture_output=True, text=True, timeout=10
+                [self._cli_path, "status"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             return AuthStatus(status=ProviderAccountStatus.NOT_CONNECTED, detail=str(exc))
@@ -92,7 +97,7 @@ class CursorProvider(AIProvider):
             result = subprocess.run(
                 [self._cli_path, "-p", full_prompt],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=600,
                 env=env,
             )

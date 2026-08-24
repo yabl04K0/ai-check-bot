@@ -26,7 +26,12 @@ def run_cli_login(
 
     try:
         result = subprocess.run(
-            [cli_path, "login"], capture_output=True, text=True, timeout=timeout
+            [cli_path, "login"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
         # Типичный случай: команда ждёт браузерную авторизацию дольше

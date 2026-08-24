@@ -107,5 +107,18 @@ class AIProvider(ABC):
             "настрой доступ через .env (см. .env.example)."
         )
 
+    def supports_key_entry(self) -> bool:
+        """Показывать ли кнопку "🔑 Ключ" в Настройках → 🔌 Провайдеры ИИ —
+        для провайдеров на API-ключе (не CLI-логине вроде Cursor и не
+        локалки без авторизации)."""
+        return False
+
+    def update_api_key(self, api_key: str | None) -> None:
+        """Применить новый API-ключ к уже собранному инстансу провайдера —
+        вызывается ботом сразу после сохранения (app.providers.key_store),
+        без рестарта процесса. По умолчанию не поддерживается; провайдеры с
+        supports_key_entry() == True обязаны переопределить это."""
+        raise ProviderError(f"{self.name.value}: ввод ключа через бота не поддерживается.")
+
     def __repr__(self) -> str:  # pragma: no cover
         return f"<{self.__class__.__name__} name={self.name}>"

@@ -18,7 +18,15 @@ from app.github_integration.client import GitHubClient, GitHubError
 
 
 def _git(*args: str, cwd) -> None:
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
 
 
 def test_push_commit_sends_token_via_env_not_argv(tmp_path, monkeypatch):
@@ -72,7 +80,7 @@ def test_push_commit_actually_pushes_to_a_real_remote(tmp_path):
         ["git", "log", "-1", "--pretty=%s", "main"],
         cwd=remote_path,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         check=True,
     )
     assert log.stdout.strip() == "initial"

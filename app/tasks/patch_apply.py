@@ -47,7 +47,7 @@ def apply_patch(local_path: Path, patch_text: str) -> tuple[bool, str]:
             ["git", "apply", "--check", str(patch_path)],
             cwd=local_path,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=30,
         )
         if check.returncode != 0:
@@ -57,7 +57,7 @@ def apply_patch(local_path: Path, patch_text: str) -> tuple[bool, str]:
             ["git", "apply", str(patch_path)],
             cwd=local_path,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=30,
         )
         if apply.returncode != 0:
@@ -74,7 +74,13 @@ def commit_all(local_path: Path, message: str) -> tuple[bool, str]:
     то, чтобы это шло ПОСЛЕ явного человеческого подтверждения."""
     try:
         add = subprocess.run(
-            ["git", "add", "-A"], cwd=local_path, capture_output=True, text=True, timeout=30
+            ["git", "add", "-A"],
+            cwd=local_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
         )
         if add.returncode != 0:
             return False, f"git add провалился:\n{add.stderr.strip()}"
@@ -83,7 +89,7 @@ def commit_all(local_path: Path, message: str) -> tuple[bool, str]:
             ["git", "commit", "-m", message],
             cwd=local_path,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=30,
         )
         if commit.returncode != 0:
@@ -99,7 +105,13 @@ def has_uncommitted_changes(local_path: Path) -> bool:
     `git commit` просто упал бы с "nothing to commit"."""
     try:
         result = subprocess.run(
-            ["git", "status", "--porcelain"], cwd=local_path, capture_output=True, text=True, timeout=15
+            ["git", "status", "--porcelain"],
+            cwd=local_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -109,7 +121,13 @@ def has_uncommitted_changes(local_path: Path) -> bool:
 def current_commit_sha(local_path: Path) -> str | None:
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=local_path, capture_output=True, text=True, timeout=15
+            ["git", "rev-parse", "HEAD"],
+            cwd=local_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

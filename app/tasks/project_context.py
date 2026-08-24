@@ -54,7 +54,7 @@ def gather_tests(project: Project, *, timeout: int = 300) -> str:
             ["python3", "-m", "pytest", "-q", "--tb=short"],
             cwd=path,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -106,7 +106,7 @@ def sweep(project: Project, *, path_filter: str | None = None) -> str:
         result = subprocess.run(
             ["grep", "-rn", "-E", "TODO|FIXME|XXX|HACK", "--include=*.py", str(target)],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=60,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -124,7 +124,13 @@ def stash_check(project: Project) -> tuple[bool, str]:
         return True, UNAVAILABLE
     try:
         result = subprocess.run(
-            ["git", "stash", "list"], cwd=path, capture_output=True, text=True, timeout=15
+            ["git", "stash", "list"],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, f"не удалось проверить git stash: {exc}"

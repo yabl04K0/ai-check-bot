@@ -44,7 +44,7 @@ def detect_repo_full_name(path: Path) -> str | None:
             ["git", "remote", "get-url", "origin"],
             cwd=path,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):

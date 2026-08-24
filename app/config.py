@@ -44,6 +44,15 @@ class ProviderSettings:
     openai_api_key: str | None = None
     cursor_agent_cli_path: str | None = None
     codex_cli_path: str | None = None
+
+    # Claude Code CLI (см. app.providers.claude_code_cli) — исполнение через
+    # `claude -p` на подписке Max/Pro, не метрируемый ANTHROPIC_API_KEY выше.
+    # Без claude_code_oauth_token основной слот берёт обычную сессию `claude`
+    # на этой машине; дополнительные аккаунты (произвольно много, см. "➕
+    # Добавить ещё аккаунт" в боте) всегда требуют CLAUDE_CODE_OAUTH_TOKEN
+    # (см. `claude setup-token`, выполняется вручную в терминале).
+    claude_cli_path: str | None = None
+    claude_code_oauth_token: str | None = None
     local_llm_base_url: str = "http://localhost:11434/v1"
     local_llm_model: str = "qwen2.5-coder:14b"
     # Недельный бюджет токенов для оценки квоты автопроверки (см.
@@ -149,6 +158,8 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             cursor_agent_cli_path=os.getenv("CURSOR_AGENT_CLI_PATH") or None,
             codex_cli_path=os.getenv("CODEX_CLI_PATH") or None,
+            claude_cli_path=os.getenv("CLAUDE_CLI_PATH") or None,
+            claude_code_oauth_token=os.getenv("CLAUDE_CODE_OAUTH_TOKEN") or None,
             local_llm_base_url=os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1"),
             local_llm_model=os.getenv("LOCAL_LLM_MODEL", "qwen2.5-coder:14b"),
             anthropic_weekly_token_budget=_int(os.getenv("ANTHROPIC_WEEKLY_TOKEN_BUDGET"), 0) or None,

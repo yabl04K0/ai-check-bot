@@ -23,7 +23,15 @@ DIFF = (
 
 
 def _git(*args: str, cwd) -> None:
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
 
 
 def _init_repo(tmp_path) -> None:
@@ -79,7 +87,13 @@ def test_self_check_commits_but_never_pushes(db, tmp_path, monkeypatch):
     assert _StubGitHubClient.push_calls == []  # push НЕ вызывался
 
     log = subprocess.run(
-        ["git", "log", "-1", "--pretty=%s"], cwd=tmp_path, capture_output=True, text=True, check=True
+        ["git", "log", "-1", "--pretty=%s"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     )
     assert "тест" in log.stdout
     assert (tmp_path / "hello.txt").read_text() == "new\n"

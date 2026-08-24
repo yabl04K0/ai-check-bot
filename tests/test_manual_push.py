@@ -17,7 +17,15 @@ from app.github_integration.client import GitHubError
 
 
 def _git(*args: str, cwd) -> None:
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
 
 
 class _StubGitHubClient:
@@ -82,7 +90,13 @@ def test_pushes_without_committing_when_nothing_uncommitted(tmp_path, db, monkey
     assert "Запушено" in text
     assert stub.pushed_paths == [repo_path]
     log = subprocess.run(
-        ["git", "log", "--oneline"], cwd=repo_path, capture_output=True, text=True, check=True
+        ["git", "log", "--oneline"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     )
     assert log.stdout.count("\n") == 1  # только исходный коммит, ничего не добавилось
 
@@ -99,7 +113,13 @@ def test_commits_uncommitted_changes_before_pushing(tmp_path, db, monkeypatch):
 
     assert "Запушено" in text
     log = subprocess.run(
-        ["git", "log", "-1", "--pretty=%s"], cwd=repo_path, capture_output=True, text=True, check=True
+        ["git", "log", "-1", "--pretty=%s"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     )
     assert "Ручной пуш" in log.stdout
 

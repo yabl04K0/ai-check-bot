@@ -9,9 +9,12 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from telegram import InlineKeyboardMarkup
+
 from app.bot.handlers.settings_admin import (
     confirm_auto_approve,
     confirm_token_access,
+    show_settings,
     toggle_auto_approve,
     toggle_token_access,
 )
@@ -44,6 +47,25 @@ def _update(admin_tg_id: int = 1):
     edit = AsyncMock()
     query = SimpleNamespace(answer=AsyncMock(), edit_message_text=edit, data="")
     return SimpleNamespace(callback_query=query, effective_user=SimpleNamespace(id=admin_tg_id)), query
+
+
+def test_show_settings_passes_markup_as_keyword_not_positional(db):
+    """Регрессия: edit_message_text(*_settings_view(context)) распаковывало
+    (text, markup) в ДВА позиционных аргумента, а реальная сигнатура
+    telegram.CallbackQuery.edit_message_text — (text, parse_mode,
+    reply_markup, ...), так что markup улетал в parse_mode. В реальном боте
+    это валилось BadRequest("Unsupported parse_mode") при любом открытии
+    ⚙️ Настройки; AsyncMock() без spec это не ловит, поэтому проверяем
+    форму вызова явно."""
+    update, query = _update()
+    context = _context()
+
+    _run(show_settings(update, context))
+
+    args, kwargs = query.edit_message_text.await_args
+    assert len(args) == 1
+    assert isinstance(args[0], str)
+    assert isinstance(kwargs.get("reply_markup"), InlineKeyboardMarkup)
 
 
 def test_first_tap_on_token_access_shows_disclaimer_without_enabling(db):

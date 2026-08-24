@@ -20,7 +20,15 @@ def _run(coro):
 
 
 def _git(*args: str, cwd) -> None:
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
 
 
 def _update_and_context(local_repos_root=None, user_data=None):
