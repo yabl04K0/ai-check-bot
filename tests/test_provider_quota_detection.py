@@ -98,6 +98,31 @@ def test_claude_falls_over_to_second_account_on_quota_error(monkeypatch):
     assert result.model == "claude-sonnet-4-5-20250929"
 
 
+def test_error_message_names_every_failed_account_not_just_last(monkeypatch):
+    """Раньше при провале ВСЕХ аккаунтов ошибка называла только последний
+    — диагностировать "какой из N реально битый" требовало лезть в шелл
+    руками. Теперь текст перечисляет каждый аккаунт с его ошибкой."""
+
+    def _fake_anthropic(api_key: str):
+        status = 401 if api_key == "sk-ant-first" else 429
+        exc = (
+            anthropic.APIStatusError("bad token", response=_fake_response(401), body=None)
+            if status == 401
+            else anthropic.RateLimitError("rate limited", response=_fake_response(429), body=None)
+        )
+        return _FakeAnthropicClient(exc)
+
+    monkeypatch.setattr(anthropic, "Anthropic", _fake_anthropic)
+    provider = ClaudeProvider("sk-ant-first", extra_accounts=["sk-ant-second"])
+
+    with pytest.raises(ProviderQuotaExceededError) as exc_info:
+        provider.run_prompt("привет")
+
+    text = str(exc_info.value)
+    assert "primary" in text
+    assert "extra:1" in text
+
+
 def _fake_post_returning(status_code: int, json_body: dict | None = None):
     def _fake_post(url, **kwargs):
         request = httpx.Request("POST", url)

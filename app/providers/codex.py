@@ -97,7 +97,7 @@ class CodexProvider(AIProvider):
         pairs = label_credentials(self._api_key, self._extra_accounts)
         return run_with_account_fallback(
             pairs,
-            lambda pair: self._run_once(pair[1], prompt, options, account_label=pair[0]),
+            lambda label, api_key: self._run_once(api_key, prompt, options, account_label=label),
             not_configured_hint="OPENAI_API_KEY не задан — залогинься в Настройках → 🔌 Провайдеры ИИ.",
         )
 

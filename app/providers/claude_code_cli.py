@@ -148,7 +148,7 @@ class ClaudeCodeCliProvider(AIProvider):
         options = options or RunOptions()
         return run_with_account_fallback(
             self._labeled_credentials(),
-            lambda pair: self._run_once(pair[1], prompt, options, account_label=pair[0]),
+            lambda label, credential: self._run_once(credential, prompt, options, account_label=label),
             not_configured_hint=(
                 f"{self.name.value}: не залогинен — запусти `claude` или `claude setup-token` "
                 "в терминале на этой машине."

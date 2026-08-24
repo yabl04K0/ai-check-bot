@@ -1,9 +1,12 @@
 """Перебор нескольких аккаунтов одного провайдера — пробуем по порядку,
 переключаемся на следующий при ЛЮБОЙ ProviderError (квота, протухший
 ключ, что угодно — см. решение пользователя: "переключение только при
-ошибке/квоте", не round-robin), поднимаем последнюю ошибку, если кончились
-все. Общий для всех провайдеров с несколькими аккаунтами (см.
-app.providers.openai_compatible/claude/codex/claude_code_cli)."""
+ошибке/квоте", не round-robin). Если отвалились все — ошибка называет
+КАЖДЫЙ аккаунт и что именно с ним не так, а не только последний: без
+этого диагностика "какой из N аккаунтов реально битый" требует лезть в
+шелл руками при каждом сбое (см. разбор живого 401 у 2 аккаунтов
+claude_code — то же самое). Общий для всех провайдеров с несколькими
+аккаунтами (см. app.providers.openai_compatible/claude/codex/claude_code_cli)."""
 
 from __future__ import annotations
 
@@ -16,19 +19,27 @@ T = TypeVar("T")
 
 
 def run_with_account_fallback(
-    credentials: Sequence[T], attempt: Callable[[T], ProviderResult], *, not_configured_hint: str
+    pairs: Sequence[tuple[str, T]],
+    attempt: Callable[[str, T], ProviderResult],
+    *,
+    not_configured_hint: str,
 ) -> ProviderResult:
-    if not credentials:
+    if not pairs:
         raise ProviderNotAuthenticatedError(not_configured_hint)
 
-    last_error: ProviderError | None = None
-    for credential in credentials:
+    errors: list[tuple[str, ProviderError]] = []
+    for label, credential in pairs:
         try:
-            return attempt(credential)
+            return attempt(label, credential)
         except ProviderError as exc:
-            last_error = exc
-    assert last_error is not None  # credentials non-empty ⇒ хотя бы одна попытка была
-    raise last_error
+            errors.append((label, exc))
+
+    # Тип последней ошибки решает, есть ли HANDOVER-пауза (см.
+    # app.tasks.pipeline.Pipeline.run ловит именно ProviderQuotaExceededError)
+    # — сохраняем его, но текст включает ВСЕ попытки, не только последнюю.
+    summary = "; ".join(f"{label}: {exc}" for label, exc in errors)
+    last_error = errors[-1][1]
+    raise type(last_error)(f"все {len(errors)} аккаунт(ов) недоступны — {summary}") from last_error
 
 
 def label_credentials(primary: str | None, extra_accounts: Sequence[str]) -> list[tuple[str, str]]:
