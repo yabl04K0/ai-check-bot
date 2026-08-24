@@ -170,10 +170,19 @@ class ClaudeCodeCliProvider(AIProvider):
             args += ["--model", options.model]
 
         env = dict(os.environ)
+        env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+        env.pop("CLAUDE_CONFIG_DIR", None)
         if credential != _LOCAL_SESSION:
-            env["CLAUDE_CODE_OAUTH_TOKEN"] = credential
-        else:
-            env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+            if Path(credential).is_dir():
+                # Обычный логин через почту/браузер (`claude auth login`),
+                # просто в отдельную изолированную папку
+                # (CLAUDE_CONFIG_DIR=<path> claude auth login человеком в
+                # терминале) — не setup-token. Проверено вживую: с пустой
+                # папкой auth status честно отдаёт loggedIn:false, то есть
+                # переменная реально изолирует сессию от основной.
+                env["CLAUDE_CONFIG_DIR"] = credential
+            else:
+                env["CLAUDE_CODE_OAUTH_TOKEN"] = credential
 
         lock = _LOCAL_SESSION_LOCK if credential == _LOCAL_SESSION else contextlib.nullcontext()
         try:

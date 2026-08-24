@@ -112,6 +112,30 @@ def test_run_prompt_passes_oauth_token_in_env(monkeypatch, db):
     assert captured["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-token-1"
 
 
+def test_run_prompt_uses_config_dir_for_directory_credentials(monkeypatch, tmp_path, db):
+    """Второй способ добавить аккаунт — не setup-token, а обычный
+    CLAUDE_CONFIG_DIR=<path> claude auth login в отдельную папку (человек
+    делает сам в терминале), путь к папке добавляется в бота вместо
+    токена. Проверено вживую: с CLAUDE_CONFIG_DIR на пустую папку
+    `claude auth status` честно отдаёт loggedIn:false — переменная реально
+    изолирует сессию."""
+    account_dir = tmp_path / "second-account"
+    account_dir.mkdir()
+    captured = {}
+
+    def _run(args, **kwargs):
+        captured["env"] = kwargs["env"]
+        return SimpleNamespace(returncode=0, stdout=_json_result(), stderr="")
+
+    monkeypatch.setattr("app.providers.claude_code_cli.subprocess.run", _run)
+    provider = ClaudeCodeCliProvider("claude", oauth_token=str(account_dir))
+
+    provider.run_prompt("привет")
+
+    assert captured["env"]["CLAUDE_CONFIG_DIR"] == str(account_dir)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in captured["env"]
+
+
 def test_quota_error_in_stderr_raises_quota_exceeded(monkeypatch):
     monkeypatch.setattr(
         "app.providers.claude_code_cli.subprocess.run",
