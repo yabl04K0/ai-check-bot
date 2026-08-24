@@ -21,6 +21,7 @@ _SessionLocal: sessionmaker | None = None
 # ALTER TABLE тут дешевле полноценного миграционного фреймворка.
 _MISSING_COLUMNS = {
     "quota_usage_log": [("account_label", "VARCHAR(32)")],
+    "jobs": [("progress_detail", "VARCHAR(400)")],
 }
 
 

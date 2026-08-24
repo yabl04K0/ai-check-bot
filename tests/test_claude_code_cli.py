@@ -142,6 +142,40 @@ def test_other_failure_stays_generic_error(monkeypatch):
     assert not isinstance(exc_info.value, ProviderQuotaExceededError)
 
 
+def test_json_api_error_status_429_raises_quota_even_without_text_marker(monkeypatch):
+    """Реальный случай: JSON в stdout при returncode=1, никакого "quota"/
+    "rate limit" в тексте — только числовой api_error_status. Раньше это
+    попадало в generic ProviderError, потому что returncode!=0 срезал путь
+    до JSON-парсинга ещё до того, как api_error_status успевал сыграть."""
+    body = json.dumps({"is_error": True, "result": "Too many requests", "api_error_status": 429})
+    monkeypatch.setattr(
+        "app.providers.claude_code_cli.subprocess.run", _fake_run(returncode=1, stdout=body)
+    )
+    provider = ClaudeCodeCliProvider("claude", oauth_token="sk-token")
+    with pytest.raises(ProviderQuotaExceededError):
+        provider.run_prompt("привет")
+
+
+def test_json_401_auth_error_stays_generic_not_quota(monkeypatch):
+    """Ровно тот баг, что ловили вживую: невалидный токен (401) — это НЕ
+    квота, HANDOVER-пауза тут была бы неправильным поведением (ждать
+    сброса лимита бессмысленно, токен сам не починится)."""
+    body = json.dumps(
+        {
+            "is_error": True,
+            "result": "Failed to authenticate. API Error: 401 Invalid bearer token",
+            "api_error_status": 401,
+        }
+    )
+    monkeypatch.setattr(
+        "app.providers.claude_code_cli.subprocess.run", _fake_run(returncode=1, stdout=body)
+    )
+    provider = ClaudeCodeCliProvider("claude", oauth_token="sk-bad-token")
+    with pytest.raises(ProviderError) as exc_info:
+        provider.run_prompt("привет")
+    assert not isinstance(exc_info.value, ProviderQuotaExceededError)
+
+
 def test_falls_over_to_extra_account_on_quota_error(monkeypatch, db):
     calls: list[str | None] = []
 

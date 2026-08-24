@@ -184,6 +184,9 @@ class Job(Base):
     progress_step: Mapped[int] = mapped_column(Integer, default=0)
     progress_total: Mapped[int] = mapped_column(Integer, default=0)
     progress_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Короткий фрагмент последнего ответа ИИ — "что реально происходит
+    # прямо сейчас", не только номер шага (см. app.bot.job_runner._NoteTrackingProvider)
+    progress_detail: Mapped[str | None] = mapped_column(String(400), nullable=True)
 
     # HANDOVER-паттерн: что сделано / на каком шаге / что открыто / что дальше
     handover_note: Mapped[str | None] = mapped_column(Text, nullable=True)

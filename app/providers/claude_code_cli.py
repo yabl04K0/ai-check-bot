@@ -192,20 +192,33 @@ class ClaudeCodeCliProvider(AIProvider):
             raise ProviderError(f"{self.name.value} CLI error: {exc}") from exc
 
         output = result.stdout.strip()
-        if result.returncode != 0 or not output:
-            error_text = result.stderr.strip() or output or f"код возврата {result.returncode}"
+        if not output:
+            error_text = result.stderr.strip() or f"код возврата {result.returncode}"
             if _looks_like_quota_error(error_text):
                 raise ProviderQuotaExceededError(f"{self.name.value}: похоже на лимит/квоту: {error_text}")
             raise ProviderError(f"{self.name.value} завершился с кодом {result.returncode}: {error_text}")
 
+        # claude -p пишет JSON в stdout даже при ошибке (returncode != 0) —
+        # разбираем его В ЛЮБОМ случае, чтобы достать настоящий
+        # api_error_status (429 — надёжный признак лимита) вместо того,
+        # чтобы гадать по тексту сырого вывода.
         try:
             data = json.loads(output)
         except ValueError as exc:
+            if result.returncode != 0:
+                error_text = result.stderr.strip() or output
+                if _looks_like_quota_error(error_text):
+                    raise ProviderQuotaExceededError(
+                        f"{self.name.value}: похоже на лимит/квоту: {error_text}"
+                    ) from exc
+                raise ProviderError(
+                    f"{self.name.value} завершился с кодом {result.returncode}: {error_text}"
+                ) from exc
             raise ProviderError(f"{self.name.value}: не удалось разобрать JSON-ответ: {exc}") from exc
 
-        if data.get("is_error"):
+        if data.get("is_error") or result.returncode != 0:
             error_text = str(data.get("result") or data)
-            if _looks_like_quota_error(error_text):
+            if data.get("api_error_status") == 429 or _looks_like_quota_error(error_text):
                 raise ProviderQuotaExceededError(f"{self.name.value}: похоже на лимит/квоту: {error_text}")
             raise ProviderError(f"{self.name.value}: {error_text}")
 

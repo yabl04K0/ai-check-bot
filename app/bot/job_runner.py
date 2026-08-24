@@ -22,6 +22,7 @@ from app.db.session import get_session
 from app.logging_setup import log_action
 from app.notifications.webhook import notify_external
 from app.providers.ai_autonomy import job_needs_manual_approval
+from app.providers.base import AIProvider, ProviderResult, RunOptions
 from app.providers.registry import ProviderRegistry
 from app.providers.router import NoProviderAvailableError, pick_provider
 from app.providers.success_history import compute_success_scores
@@ -32,6 +33,34 @@ from app.tasks.queue import JobQueue
 from app.tasks.types import TASK_TYPE_LABELS
 
 logger = logging.getLogger(__name__)
+
+class _NoteTrackingProvider:
+    """Прозрачная обёртка вокруг AIProvider для одной job — после каждого
+    run_prompt сохраняет короткий фрагмент ответа в Job.progress_detail,
+    чтобы прогресс в Telegram показывал не только номер шага, но и что ИИ
+    реально только что сказал/сделал. Пишет через свою короткую сессию
+    (get_session()), не через ctx.session — Fleet-checkers/критики зовут
+    run_prompt из нескольких потоков параллельно (ThreadPoolExecutor, см.
+    app.tasks.protocol_full), а ctx.session на всех один и не потокобезопасна;
+    тот же приём, что у app.providers.quota.QuotaTracker.record()."""
+
+    def __init__(self, inner: AIProvider, job_id: int) -> None:
+        self._inner = inner
+        self._job_id = job_id
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def run_prompt(self, prompt: str, options: RunOptions | None = None) -> ProviderResult:
+        result = self._inner.run_prompt(prompt, options)
+        snippet = " ".join(result.text.split())[:400]
+        if snippet:
+            with get_session() as session:
+                job = session.get(Job, self._job_id)
+                if job is not None:
+                    job.progress_detail = snippet
+        return result
+
 
 CANCEL_REQUESTS: set[int] = set()  # job_id-ки, отменённые пользователем
 PAUSE_REQUESTS: set[int] = set()  # job_id-ки, поставленные на ⏸ Паузу
@@ -180,7 +209,7 @@ def _run_pipeline_blocking(application: Application, job_id: int) -> dict:
             job.provider_mode = ProviderMode.AUTO
             session.commit()
 
-        provider = registry.get(job.provider)
+        provider = _NoteTrackingProvider(registry.get(job.provider), job.id)
         projects = list(job.projects)
         pipeline = build_pipeline(job.task_type)
         ctx = StepContext(

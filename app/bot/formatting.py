@@ -45,11 +45,13 @@ def render_progress(job: Job) -> str:
     bar = _bar(job.progress_step, job.progress_total)
     step_label = job.progress_label or ""
     pause_note = "⏸ НА ПАУЗЕ — нажми «▶️ Продолжить»\n" if job.status == JobStatus.PAUSED_MANUAL else ""
+    detail_line = f"\n💬 {job.progress_detail}" if job.progress_detail else ""
     return (
         f"{pause_note}"
         f"📊 ПРОГРЕСС — {label}\n"
         f"{bar} {pct}%\n"
         f"Шаг {job.progress_step}/{job.progress_total}: {step_label}"
+        f"{detail_line}"
         f"{_limits_line(job)}"
     )
 
