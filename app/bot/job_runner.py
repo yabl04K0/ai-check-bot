@@ -35,14 +35,22 @@ from app.tasks.types import TASK_TYPE_LABELS
 logger = logging.getLogger(__name__)
 
 class _NoteTrackingProvider:
-    """Прозрачная обёртка вокруг AIProvider для одной job — после каждого
-    run_prompt сохраняет короткий фрагмент ответа в Job.progress_detail,
-    чтобы прогресс в Telegram показывал не только номер шага, но и что ИИ
-    реально только что сказал/сделал. Пишет через свою короткую сессию
-    (get_session()), не через ctx.session — Fleet-checkers/критики зовут
-    run_prompt из нескольких потоков параллельно (ThreadPoolExecutor, см.
-    app.tasks.protocol_full), а ctx.session на всех один и не потокобезопасна;
-    тот же приём, что у app.providers.quota.QuotaTracker.record()."""
+    """Прозрачная обёртка вокруг AIProvider для одной job:
+    1. После каждого run_prompt сохраняет короткий фрагмент ответа в
+       Job.progress_detail — чтобы прогресс в Telegram показывал не
+       только номер шага, но и что ИИ реально только что сказал/сделал.
+    2. Логирует ПОЛНЫЙ промпт и ПОЛНЫЙ ответ (не обрезанные до 400
+       символов, как progress_detail) через стандартный logging — в тот
+       же файл, что уже читается для диагностики (см. запрос пользователя
+       "мало инфы, сделай логирование всех ответов"). Ошибки уже логируются
+       выше по стеку (start_job's logger.exception с полным traceback) —
+       тут не дублируем, только успешные вызовы.
+
+    Пишет через свою короткую сессию (get_session()), не через
+    ctx.session — Fleet-checkers/критики зовут run_prompt из нескольких
+    потоков параллельно (ThreadPoolExecutor, см. app.tasks.protocol_full),
+    а ctx.session на всех один и не потокобезопасна; тот же приём, что у
+    app.providers.quota.QuotaTracker.record()."""
 
     def __init__(self, inner: AIProvider, job_id: int) -> None:
         self._inner = inner
@@ -52,7 +60,23 @@ class _NoteTrackingProvider:
         return getattr(self._inner, name)
 
     def run_prompt(self, prompt: str, options: RunOptions | None = None) -> ProviderResult:
+        logger.info(
+            "Job #%s [%s] ПРОМПТ (%d симв.):\n%s",
+            self._job_id,
+            self._inner.name.value,
+            len(prompt),
+            prompt[:3000] + ("…[обрезано]" if len(prompt) > 3000 else ""),
+        )
         result = self._inner.run_prompt(prompt, options)
+        logger.info(
+            "Job #%s [%s] ОТВЕТ (%d симв., %d+%d ток.):\n%s",
+            self._job_id,
+            self._inner.name.value,
+            len(result.text),
+            result.input_tokens,
+            result.output_tokens,
+            result.text[:6000] + ("…[обрезано]" if len(result.text) > 6000 else ""),
+        )
         snippet = " ".join(result.text.split())[:400]
         if snippet:
             with get_session() as session:
