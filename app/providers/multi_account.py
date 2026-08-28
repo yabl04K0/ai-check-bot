@@ -23,7 +23,16 @@ def run_with_account_fallback(
     attempt: Callable[[str, T], ProviderResult],
     *,
     not_configured_hint: str,
+    forced_account_label: str | None = None,
 ) -> ProviderResult:
+    """forced_account_label (см. app.providers.base.RunOptions, приоритеты
+    аккаунтов — app.providers.tiers) сужает перебор до ОДНОГО аккаунта:
+    вызов должен уйти именно туда, а не первому живому по порядку. Если
+    метка не найдена среди pairs — считаем это "не настроен", как и
+    пустой pairs целиком, а не молча перебираем остальных (иначе тир
+    "делегация" мог бы незаметно свалиться на аккаунт из тира "глава")."""
+    if forced_account_label is not None:
+        pairs = [(label, credential) for label, credential in pairs if label == forced_account_label]
     if not pairs:
         raise ProviderNotAuthenticatedError(not_configured_hint)
 

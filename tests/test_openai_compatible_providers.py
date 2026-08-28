@@ -45,6 +45,27 @@ def _fake_success(text: str = "ok"):
     return _fake_post
 
 
+def _fake_success_with_headers(headers: dict):
+    def _fake_post(url, **kwargs):
+        request = httpx.Request("POST", url)
+        body = {
+            "model": "test-model",
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 7},
+        }
+        return httpx.Response(200, json=body, headers=headers, request=request)
+
+    return _fake_post
+
+
+def _fake_error_with_headers(status_code: int, headers: dict):
+    def _fake_post(url, **kwargs):
+        request = httpx.Request("POST", url)
+        return httpx.Response(status_code, json={"error": "boom"}, headers=headers, request=request)
+
+    return _fake_post
+
+
 ALL_SUBCLASSES = [
     GeminiProvider,
     DeepSeekProvider,
@@ -188,3 +209,68 @@ def test_all_new_providers_wired_into_registry():
     ):
         assert expected in providers
         assert providers[expected].auth_status().status == ProviderAccountStatus.CONNECTED
+
+
+@pytest.mark.parametrize("provider_cls", ALL_SUBCLASSES)
+def test_rate_limit_headers_scraped_into_last_rate_limit_on_success(provider_cls, monkeypatch, db):
+    headers = {
+        "x-ratelimit-limit-tokens": "1000",
+        "x-ratelimit-remaining-tokens": "250",
+        "content-type": "application/json",
+    }
+    monkeypatch.setattr(httpx, "post", _fake_success_with_headers(headers))
+    provider = provider_cls("test-key")
+
+    provider.run_prompt("вопрос")
+
+    assert provider._last_rate_limit["x-ratelimit-limit-tokens"] == "1000"
+    assert provider._last_rate_limit["x-ratelimit-remaining-tokens"] == "250"
+    assert "content-type" not in provider._last_rate_limit
+
+
+@pytest.mark.parametrize("provider_cls", ALL_SUBCLASSES)
+def test_rate_limit_headers_scraped_on_error_response_too(provider_cls, monkeypatch):
+    headers = {"x-ratelimit-limit-tokens": "500", "x-ratelimit-remaining-tokens": "0"}
+    monkeypatch.setattr(httpx, "post", _fake_error_with_headers(429, headers))
+    provider = provider_cls("test-key")
+
+    with pytest.raises(ProviderQuotaExceededError):
+        provider.run_prompt("вопрос")
+
+    assert provider._last_rate_limit["x-ratelimit-limit-tokens"] == "500"
+    assert provider._last_rate_limit["x-ratelimit-remaining-tokens"] == "0"
+
+
+def test_estimate_quota_prefers_scraped_headers_over_self_estimate(monkeypatch, db):
+    headers = {
+        "x-ratelimit-limit-tokens": "1000",
+        "x-ratelimit-remaining-tokens": "250",
+    }
+    monkeypatch.setattr(httpx, "post", _fake_success_with_headers(headers))
+    provider = GeminiProvider("test-key")
+    provider.run_prompt("вопрос")
+
+    estimate = provider.estimate_quota()
+
+    assert estimate.is_estimate is False
+    assert estimate.used_pct == pytest.approx(75.0)
+
+
+def test_estimate_quota_falls_back_to_self_estimate_without_scraped_headers(db):
+    provider = GeminiProvider("test-key")
+
+    estimate = provider.estimate_quota()
+
+    assert estimate.is_estimate is True
+    assert estimate.used_pct is None
+
+
+def test_estimate_quota_falls_back_when_scraped_headers_are_unusable(monkeypatch, db):
+    headers = {"x-ratelimit-limit-tokens": "0", "x-ratelimit-remaining-tokens": "0"}
+    monkeypatch.setattr(httpx, "post", _fake_success_with_headers(headers))
+    provider = GeminiProvider("test-key")
+    provider.run_prompt("вопрос")
+
+    estimate = provider.estimate_quota()
+
+    assert estimate.is_estimate is True

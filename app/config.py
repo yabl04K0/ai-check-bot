@@ -129,6 +129,12 @@ class Settings:
     # добавление проекта работает как раньше, только ручной ввод.
     local_repos_root: Path | None = None
     notifications: NotificationSettings = field(default_factory=NotificationSettings)
+    # Путь к БД проекта-соседа MeCelium (см. app.proxies.mecelium_import) —
+    # источник пула прокси для аккаунтов/API ai-check-bot. По умолчанию
+    # предполагаем стандартный layout "проекты одного владельца рядом
+    # в одной папке" (см. MECELIUM_DB_PATH в .env.example), не абсолютный
+    # путь конкретной машины — переопределяется, если MeCelium лежит иначе.
+    mecelium_db_path: Path | None = None
 
     def require_bot_token(self) -> str:
         if not self.bot_token:
@@ -204,6 +210,11 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         ),
         db_path=project_root / "data" / "bot.sqlite3",
         local_repos_root=Path(os.getenv("LOCAL_REPOS_ROOT")) if os.getenv("LOCAL_REPOS_ROOT") else None,
+        mecelium_db_path=(
+            Path(os.getenv("MECELIUM_DB_PATH"))
+            if os.getenv("MECELIUM_DB_PATH")
+            else project_root.parent / "MeCelium" / "data" / "mecelium.db"
+        ),
         notifications=NotificationSettings(
             slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL") or None,
             discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL") or None,

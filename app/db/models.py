@@ -10,7 +10,7 @@ from __future__ import annotations
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -79,6 +79,7 @@ class ProviderName(str, enum.Enum):
     PERPLEXITY = "perplexity"
     FIREWORKS = "fireworks"
     CEREBRAS = "cerebras"
+    CUSTOM = "custom"
 
 
 class ProviderMode(str, enum.Enum):
@@ -92,7 +93,8 @@ class JobStatus(str, enum.Enum):
     QUEUED = "queued"
     RUNNING = "running"
     PAUSED_QUOTA = "paused_quota"
-    PAUSED_MANUAL = "paused_manual"  # человек нажал ⏸ Пауза, ждёт ▶️ Продолжить
+    PAUSED_MANUAL = "paused_manual"
+    PAUSED_QUESTION = "paused_question"
     DONE = "done"
     CANCELLED = "cancelled"
     ERROR = "error"
@@ -138,6 +140,8 @@ class Project(Base):
     autocheck_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # self-check никогда не автопушит без ручного подтверждения — см. README
     autopush_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    nightly_check_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    nightly_last_run_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     findings: Mapped[list[Finding]] = relationship(
@@ -185,8 +189,16 @@ class Job(Base):
     progress_total: Mapped[int] = mapped_column(Integer, default=0)
     progress_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Короткий фрагмент последнего ответа ИИ — "что реально происходит
-    # прямо сейчас", не только номер шага (см. app.bot.job_runner._NoteTrackingProvider)
+    # прямо сейчас", не только номер шага (см. app.providers.note_tracking.NoteTrackingProvider)
     progress_detail: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    # Снимок ctx.state (JSON) после последнего успешно завершённого шага —
+    # без него резюме после HANDOVER/рестарта не может пропустить уже
+    # пройденные шаги: их результаты (intake/domains/aggregated_report/...)
+    # нужны следующим шагам, а ctx.state иначе живёт только в памяти и
+    # умирает вместе с процессом. См. app.tasks.pipeline.Pipeline.run.
+    state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    live_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pending_question: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # HANDOVER-паттерн: что сделано / на каком шаге / что открыто / что дальше
     handover_note: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -338,3 +350,183 @@ class BotSetting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(String(256))
+
+
+class ProxyProtocol(str, enum.Enum):
+    """socks4/socks5/http/https — httpx использует напрямую как forward-proxy
+    (через httpx[socks]/socksio). shadowsocks — не понимается httpx
+    напрямую, нужен локальный мост (см. app.proxies.xray_bridge: Xray
+    поднимает локальный SOCKS5-инбаунд поверх shadowsocks-аутбаунда,
+    ProxyPoolEntry.url() отдаёт именно этот локальный адрес). Остальные
+    VPN-туннели MeCelium (vless/trojan/wireguard/hysteria) пока не
+    поддержаны — им нужен отдельный клиент того же типа, что и shadowsocks,
+    но конфиг сложнее одной строки method:password (см. app.proxies.mecelium_import)."""
+
+    SOCKS4 = "socks4"
+    SOCKS5 = "socks5"
+    HTTP = "http"
+    HTTPS = "https"
+    SHADOWSOCKS = "shadowsocks"
+
+
+class ProxyPoolStatus(str, enum.Enum):
+    ACTIVE = "active"  # рабочий, может быть назначен или уже назначен
+    DEAD = "dead"  # health-check не прошёл нужное число раз подряд
+
+
+class ProxyPoolEntry(Base):
+    """Один прокси в пуле бота — импортируется из MeCelium или руками (см.
+    app.proxies.mecelium_import/manual_import), не создаётся вручную через
+    другой путь. host:port:protocol уникальны — повторный импорт того же
+    прокси обновляет запись, а не плодит дубликаты.
+
+    Для protocol=SHADOWSOCKS host/port — адрес РЕМОУТ-сервера (то, что
+    Xray дозванивается сам); ss_method/ss_password — его учётные данные;
+    local_port — локальный SOCKS5-порт моста (см. app.proxies.xray_bridge),
+    именно он идёт в url() и дальше в httpx(proxy=...)."""
+
+    __tablename__ = "proxy_pool"
+    __table_args__ = (UniqueConstraint("host", "port", "protocol", name="uq_proxy_pool_endpoint"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    host: Mapped[str] = mapped_column(String(255))
+    port: Mapped[int] = mapped_column(Integer)
+    protocol: Mapped[ProxyProtocol] = mapped_column(_enum_type(ProxyProtocol, 16))
+    source: Mapped[str] = mapped_column(String(64), default="mecelium")
+    # Снимок health_score на момент импорта (reliability+speed/100-latency/50,
+    # та же формула, что в MeCelium, см. mecelium_import.py) — только для
+    # сортировки при импорте, живой health бота считается отдельно ниже.
+    import_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[ProxyPoolStatus] = mapped_column(
+        _enum_type(ProxyPoolStatus, 16), default=ProxyPoolStatus.ACTIVE
+    )
+    fail_streak: Mapped[int] = mapped_column(Integer, default=0)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ss_method: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ss_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    local_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    def url(self) -> str:
+        if self.protocol == ProxyProtocol.SHADOWSOCKS:
+            return f"socks5://127.0.0.1:{self.local_port}"
+        return f"{self.protocol.value}://{self.host}:{self.port}"
+
+
+class AccountPriority(str, enum.Enum):
+    """Три тира приоритета аккаунтов (см. app.providers.tiers) — пользователь
+    сам решает, какой именно (provider, account_label) на что годится,
+    когда включён режим делегации (BotSetting, выключен по умолчанию, тот
+    же тумблер-паттерн, что app.providers.ai_autonomy):
+    - HEAD ("👑 Глава") — планирование/критика/финальные решения, шаги,
+      где нужна лучшая модель на аккаунте.
+    - MEDIUM ("⚖️ Средний") — реализация фиксов/тестов, шаги средней
+      сложности.
+    - DELEGATION ("🤖 Делегация") — параллельный fleet-checker-скан;
+      несколько аккаунтов в этом тире раздаются round-robin (см.
+      app.providers.tiers.TierPicker), чтобы N параллельных доменов
+      получили N РАЗНЫХ аккаунтов, а не долбили один и тот же."""
+
+    HEAD = "head"
+    MEDIUM = "medium"
+    DELEGATION = "delegation"
+
+
+class AccountTierAssignment(Base):
+    """Тир ОДНОГО аккаунта (provider+account_label — "primary"/"extra:N",
+    см. app.providers.multi_account.label_credentials). Отсутствие строки
+    для (provider, account_label) значит "тир не задан" — такой аккаунт
+    просто не участвует в тир-роутинге, даже если режим делегации включён
+    (см. app.providers.tiers.pick_for_tier — тихий фолбэк на ctx.provider,
+    никогда не роняет прогон из-за неполной настройки тиров)."""
+
+    __tablename__ = "account_tier_assignments"
+    __table_args__ = (UniqueConstraint("provider", "account_label", name="uq_account_tier_consumer"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[ProviderName] = mapped_column(_enum_type(ProviderName, 32))
+    account_label: Mapped[str] = mapped_column(String(32))
+    priority: Mapped[AccountPriority] = mapped_column(_enum_type(AccountPriority, 16))
+
+
+class JobAccountTierAssignment(Base):
+    """Тир ОДНОГО аккаунта для ОДНОЙ конкретной задачи — оверрайд
+    AccountTierAssignment выше на время одного прогона (см. запрос
+    пользователя: "при включении задачи... список с иишками которые будут
+    работать с проектом и приоритет на этом этапе"). Наличие ХОТЯ БЫ ОДНОЙ
+    строки с этим job_id значит "для этой задачи используем ТОЛЬКО эти
+    аккаунты" — все прочие (даже с глобальным тиром) в НЕЙ не участвуют.
+    Полное отсутствие строк для job_id значит "оверрайда нет", и тир-роутинг
+    берёт глобальные настройки (AccountTierAssignment) как раньше. См.
+    app.providers.tiers.TierPicker/run_prompt_with_tier/job_has_tier_overrides."""
+
+    __tablename__ = "job_account_tier_assignments"
+    __table_args__ = (UniqueConstraint("job_id", "provider", "account_label", name="uq_job_tier_consumer"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"))
+    provider: Mapped[ProviderName] = mapped_column(_enum_type(ProviderName, 32))
+    account_label: Mapped[str] = mapped_column(String(32))
+    priority: Mapped[AccountPriority] = mapped_column(_enum_type(AccountPriority, 16))
+
+
+class ProxyAssignment(Base):
+    """Закрепление ОДНОГО прокси за ОДНИМ потребителем (provider+account_label
+    — "primary"/"extra:N", см. app.providers.multi_account.label_credentials).
+    proxy_id уникален — прокси не могут "повторяться" между потребителями
+    (см. запрос пользователя); (provider, account_label) тоже уникален — у
+    потребителя одновременно не больше одного назначения."""
+
+    __tablename__ = "proxy_assignments"
+    __table_args__ = (UniqueConstraint("provider", "account_label", name="uq_assignment_consumer"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    proxy_id: Mapped[int] = mapped_column(ForeignKey("proxy_pool.id"), unique=True)
+    provider: Mapped[ProviderName] = mapped_column(_enum_type(ProviderName, 32))
+    account_label: Mapped[str] = mapped_column(String(32))
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    proxy: Mapped[ProxyPoolEntry] = relationship()
+
+
+class AiChatSession(Base):
+    """Один 🗨 Групповой ИИ-чат (см. app.ai_chat) — общий контекст на всю
+    беседу, несколько ИИ-аккаунтов участвуют по очереди (оркестратор тира
+    "Глава" + делегирование под-вопросов другим тирам, см.
+    app.providers.tiers). full_access — явное согласие пользователя ПЕРЕД
+    первым сообщением (см. запрос: "перед входом в такой чат спрашивать
+    выдавать ли все права") на то, что ИИ в этом чате сможет вызывать
+    инструменты управления ботом (app.ai_chat.tools), а не только
+    отвечать текстом; закрытый чат (closed_at задан) в истории остаётся,
+    но новых сообщений в него не принимается."""
+
+    __tablename__ = "ai_chat_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tg_user_id: Mapped[str] = mapped_column(String(64))
+    full_access: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Что оркестратор делает ПРЯМО СЕЙЧАС в рамках текущего хода (см.
+    # app.ai_chat.orchestrator.run_turn) — "🧠 X думает…"/"🔧 Вызываю Y…" —
+    # читается отдельным поллинг-циклом в app.bot.handlers.ai_chat, чтобы
+    # живо редактировать статус-сообщение, пока идёт долгий ход (запрос
+    # пользователя: "улучши визуал выполнения всех команд" — раньше
+    # единственной обратной связью был статичный индикатор "печатает…").
+    status_detail: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+
+class AiChatMessage(Base):
+    """Одно сообщение в AiChatSession — role: user/assistant/tool.
+    author задан только для role=assistant — "provider:account_label",
+    какой именно ИИ-аккаунт ответил этим сообщением (несколько разных
+    аккаунтов пишут в ОДНУ историю, см. модульный докстринг сессии)."""
+
+    __tablename__ = "ai_chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("ai_chat_sessions.id"))
+    role: Mapped[str] = mapped_column(String(16))
+    author: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from app.db.models import Job, JobStatus
 from app.providers.quota import account_usage_summary
 from app.tasks.types import TASK_TYPE_LABELS
@@ -44,7 +46,12 @@ def render_progress(job: Job) -> str:
     pct = int(100 * job.progress_step / job.progress_total) if job.progress_total else 0
     bar = _bar(job.progress_step, job.progress_total)
     step_label = job.progress_label or ""
-    pause_note = "⏸ НА ПАУЗЕ — нажми «▶️ Продолжить»\n" if job.status == JobStatus.PAUSED_MANUAL else ""
+    if job.status == JobStatus.PAUSED_MANUAL:
+        pause_note = "⏸ НА ПАУЗЕ — нажми «▶️ Продолжить»\n"
+    elif job.status == JobStatus.PAUSED_QUESTION:
+        pause_note = f"❓ ЖДЁТ ОТВЕТА: {job.pending_question or ''}\n"
+    else:
+        pause_note = ""
     detail_line = f"\n💬 {job.progress_detail}" if job.progress_detail else ""
     return (
         f"{pause_note}"
@@ -68,9 +75,31 @@ def render_error(job: Job) -> str:
     return f"❌ Ошибка выполнения\n{job.handover_note or ''}"
 
 
+def _confidence_badge(job: Job) -> str:
+    if not job.state_json:
+        return ""
+    try:
+        state = json.loads(job.state_json)
+    except ValueError:
+        return ""
+    if "convergence_rounds" not in state:
+        return ""
+    if state.get("escalated"):
+        crux = state.get("escalation_crux")
+        detail = f": {crux}" if crux else ""
+        return f"🔴 Критики не сошлись за все раунды доработки — проверь внимательнее{detail}"
+    rounds = state.get("convergence_rounds", 0)
+    if rounds == 0:
+        return "🟢 Критики согласились с первого раза"
+    return f"🟡 Согласовано после {rounds} раунда(ов) доработки"
+
+
 def render_report_header(job: Job, findings_summary: str | None = None) -> str:
     label = TASK_TYPE_LABELS.get(job.task_type, job.task_type)
     header = f"📋 ОТЧЁТ — {label}"
+    badge = _confidence_badge(job)
+    if badge:
+        header += f"\n{badge}"
     if findings_summary:
         header += f"\n{findings_summary}"
     return header

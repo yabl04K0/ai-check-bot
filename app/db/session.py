@@ -21,7 +21,22 @@ _SessionLocal: sessionmaker | None = None
 # ALTER TABLE тут дешевле полноценного миграционного фреймворка.
 _MISSING_COLUMNS = {
     "quota_usage_log": [("account_label", "VARCHAR(32)")],
-    "jobs": [("progress_detail", "VARCHAR(400)")],
+    "jobs": [
+        ("progress_detail", "VARCHAR(400)"),
+        ("state_json", "TEXT"),
+        ("live_notes", "TEXT"),
+        ("pending_question", "TEXT"),
+    ],
+    "proxy_pool": [
+        ("ss_method", "VARCHAR(64)"),
+        ("ss_password", "VARCHAR(255)"),
+        ("local_port", "INTEGER"),
+    ],
+    "ai_chat_sessions": [("status_detail", "VARCHAR(200)")],
+    "projects": [
+        ("nightly_check_time", "VARCHAR(5)"),
+        ("nightly_last_run_date", "VARCHAR(10)"),
+    ],
 }
 
 

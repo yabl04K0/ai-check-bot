@@ -1,15 +1,15 @@
-"""_NoteTrackingProvider — обёртка вокруг провайдера, которая после каждого
+"""NoteTrackingProvider — обёртка вокруг провайдера, которая после каждого
 run_prompt сохраняет фрагмент ответа в Job.progress_detail, чтобы прогресс
 в Telegram показывал не только номер шага, но и что ИИ реально сказал
-(см. app.bot.job_runner, запрос пользователя на "подробное описание
-работы ИИ")."""
+(см. app.providers.note_tracking, запрос пользователя на "подробное
+описание работы ИИ")."""
 
 from __future__ import annotations
 
-from app.bot.job_runner import _NoteTrackingProvider
 from app.db.models import Job, ProviderName, TaskType
 from app.db.session import get_session
 from app.providers.base import AuthStatus, ProviderAccountStatus, ProviderResult
+from app.providers.note_tracking import NoteTrackingProvider as _NoteTrackingProvider
 
 
 class _FakeProvider:

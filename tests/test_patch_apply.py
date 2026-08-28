@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import subprocess
 
-from app.tasks.patch_apply import apply_patch, clean_patch_text, commit_all, current_commit_sha
+from app.tasks.patch_apply import (
+    apply_patch,
+    clean_patch_text,
+    commit_all,
+    create_topic_branch,
+    current_branch,
+    current_commit_sha,
+    discard_uncommitted_changes,
+    has_uncommitted_changes,
+)
 
 
 def _git(*args: str, cwd) -> subprocess.CompletedProcess:
@@ -99,3 +108,56 @@ def test_current_commit_sha_returns_hash(tmp_path):
 
 def test_current_commit_sha_none_when_not_a_repo(tmp_path):
     assert current_commit_sha(tmp_path) is None
+
+
+def test_current_branch_returns_checked_out_branch(tmp_path):
+    _init_repo(tmp_path)
+    branch = current_branch(tmp_path)
+    assert branch in ("main", "master")  # зависит от git config init.defaultBranch
+
+
+def test_current_branch_none_when_not_a_repo(tmp_path):
+    assert current_branch(tmp_path) is None
+
+
+def test_create_topic_branch_switches_to_new_branch(tmp_path):
+    _init_repo(tmp_path)
+    ok, detail = create_topic_branch(tmp_path, "fix/bot-job1-20260825")
+    assert ok is True, detail
+    assert current_branch(tmp_path) == "fix/bot-job1-20260825"
+
+
+def test_create_topic_branch_fails_on_duplicate_name(tmp_path):
+    _init_repo(tmp_path)
+    create_topic_branch(tmp_path, "fix/dup")
+    ok, detail = create_topic_branch(tmp_path, "fix/dup")
+    assert ok is False
+    assert detail
+
+
+def test_discard_uncommitted_changes_reverts_tracked_file(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / "hello.txt").write_text("modified\n")
+    assert has_uncommitted_changes(tmp_path) is True
+
+    ok, detail = discard_uncommitted_changes(tmp_path)
+
+    assert ok is True, detail
+    assert (tmp_path / "hello.txt").read_text() == "line1\nline2\nline3\n"
+    assert has_uncommitted_changes(tmp_path) is False
+
+
+def test_discard_uncommitted_changes_leaves_untracked_files_alone(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / "new_untracked.txt").write_text("keep me\n")
+
+    ok, detail = discard_uncommitted_changes(tmp_path)
+
+    assert ok is True, detail
+    assert (tmp_path / "new_untracked.txt").exists()
+
+
+def test_discard_uncommitted_changes_fails_cleanly_outside_repo(tmp_path):
+    ok, detail = discard_uncommitted_changes(tmp_path)
+    assert ok is False
+    assert detail

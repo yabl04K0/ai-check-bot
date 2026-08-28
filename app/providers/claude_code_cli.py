@@ -32,6 +32,8 @@ import threading
 from pathlib import Path
 
 from app.db.models import ProviderAccountStatus, ProviderName
+from app.providers.agent_permissions import can_push_github
+from app.providers.ai_autonomy import ai_github_token_access_enabled
 from app.providers.base import (
     AIProvider,
     AuthStatus,
@@ -43,6 +45,7 @@ from app.providers.base import (
 )
 from app.providers.multi_account import run_with_account_fallback
 from app.providers.quota import QuotaTracker
+from app.proxies.pool import resolve_proxy_url_safe
 
 # У `claude -p` нет структурированного кода ошибки типа HTTP 429 в JSON
 # (см. is_error/result) — эвристика по тексту, тот же приём, что и в
@@ -89,11 +92,16 @@ class ClaudeCodeCliProvider(AIProvider):
         quota_tracker: QuotaTracker | None = None,
         *,
         extra_accounts: list[str] | None = None,
+        github_token: str | None = None,
     ) -> None:
         self._cli_path = cli_path
         self._oauth_token = oauth_token
         self._extra_accounts = list(extra_accounts or [])
         self._quota_tracker = quota_tracker or QuotaTracker(ProviderName.CLAUDE_CODE)
+        self._github_token = github_token
+
+    def update_github_token(self, token: str | None) -> None:
+        self._github_token = token
 
     def _all_credentials(self) -> list[str]:
         primary: list[str] = []
@@ -153,7 +161,40 @@ class ClaudeCodeCliProvider(AIProvider):
                 f"{self.name.value}: не залогинен — запусти `claude` или `claude setup-token` "
                 "в терминале на этой машине."
             ),
+            forced_account_label=options.forced_account_label,
         )
+
+    def _build_env(self, credential: str, account_label: str | None) -> dict[str, str]:
+        env = dict(os.environ)
+        env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+        env.pop("CLAUDE_CONFIG_DIR", None)
+        # Прокси на аккаунт — CLI сам не умеет флаг прокси, но HTTP-клиент
+        # внутри уважает стандартные переменные окружения (см. запрос
+        # пользователя: разные прокси на разные аккаунты, чтобы не палить
+        # один и тот же IP несколькими сессиями claude одновременно).
+        proxy_url = resolve_proxy_url_safe(self.name, account_label) if account_label else None
+        if proxy_url:
+            env["HTTPS_PROXY"] = proxy_url
+            env["HTTP_PROXY"] = proxy_url
+        else:
+            env.pop("HTTPS_PROXY", None)
+            env.pop("HTTP_PROXY", None)
+        if credential != _LOCAL_SESSION:
+            if Path(credential).is_dir():
+                # Обычный логин через почту/браузер (`claude auth login`),
+                # просто в отдельную изолированную папку
+                # (CLAUDE_CONFIG_DIR=<path> claude auth login человеком в
+                # терминале) — не setup-token. Проверено вживую: с пустой
+                # папкой auth status честно отдаёт loggedIn:false, то есть
+                # переменная реально изолирует сессию от основной.
+                env["CLAUDE_CONFIG_DIR"] = credential
+            else:
+                env["CLAUDE_CODE_OAUTH_TOKEN"] = credential
+        if self._github_token and ai_github_token_access_enabled() and can_push_github(self.name):
+            env["GITHUB_TOKEN"] = self._github_token
+        else:
+            env.pop("GITHUB_TOKEN", None)
+        return env
 
     def _run_once(
         self, credential: str, prompt: str, options: RunOptions, *, account_label: str | None = None
@@ -169,21 +210,7 @@ class ClaudeCodeCliProvider(AIProvider):
         if options.model:
             args += ["--model", options.model]
 
-        env = dict(os.environ)
-        env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
-        env.pop("CLAUDE_CONFIG_DIR", None)
-        if credential != _LOCAL_SESSION:
-            if Path(credential).is_dir():
-                # Обычный логин через почту/браузер (`claude auth login`),
-                # просто в отдельную изолированную папку
-                # (CLAUDE_CONFIG_DIR=<path> claude auth login человеком в
-                # терминале) — не setup-token. Проверено вживую: с пустой
-                # папкой auth status честно отдаёт loggedIn:false, то есть
-                # переменная реально изолирует сессию от основной.
-                env["CLAUDE_CONFIG_DIR"] = credential
-            else:
-                env["CLAUDE_CODE_OAUTH_TOKEN"] = credential
-
+        env = self._build_env(credential, account_label)
         lock = _LOCAL_SESSION_LOCK if credential == _LOCAL_SESSION else contextlib.nullcontext()
         try:
             with lock:
@@ -253,6 +280,96 @@ class ClaudeCodeCliProvider(AIProvider):
             model=None,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            raw=data,
+        )
+
+    # Настоящая агентная задача (читает/правит файлы, гоняет bash) — не
+    # одна LLM-реплика вида run_prompt, может занять сильно дольше обычных
+    # 600с (см. AGENTIC_TIMEOUT_SECONDS ниже).
+    AGENTIC_TIMEOUT_SECONDS = 1800
+
+    def run_agentic_task(
+        self, prompt: str, project_path: str, *, account_label: str | None = None, can_edit: bool = True
+    ) -> ProviderResult:
+        """НАСТОЯЩИЙ агентный прогон — в отличие от run_prompt (одна
+        реплика, контекст уже собран текстом заранее, см.
+        app.tasks.project_context), тут CLI САМ читает/пишет файлы и
+        выполняет bash В РЕАЛЬНОМ каталоге project_path через
+        --permission-mode bypassPermissions (без единого запроса
+        подтверждения — non-interactive -p режим физически не может ждать
+        TTY, поэтому любой другой permission-mode тут просто завис бы или
+        отказал на первом же реальном действии).
+
+        Разрешено вызывать только когда явно включено
+        (app.providers.ai_autonomy.ai_native_agents_enabled) и — если
+        автоодобрение выключено — после ручного тапа "Разрешить" (см.
+        app.ai_chat.tools._tool_run_native_agent, app.ai_chat.approvals,
+        запрос пользователя: "выбор в начале будут ли вопросы или ии сам
+        будет выполнять"). Сам провайдер эти проверки НЕ делает — у него
+        нет доступа к тумблерам/чату, это ответственность вызывающего
+        кода; провайдер просто исполняет то, что попросили."""
+        if not self._cli_path:
+            raise ProviderNotAuthenticatedError(
+                f"CLAUDE_CLI_PATH не задан — некуда запускать {self.name.value}."
+            )
+        pairs = self._labeled_credentials()
+        if account_label is not None:
+            pairs = [(label, cred) for label, cred in pairs if label == account_label]
+        if not pairs:
+            raise ProviderNotAuthenticatedError(
+                f"{self.name.value}: не залогинен — запусти `claude` или `claude setup-token`."
+            )
+        label, credential = pairs[0]
+
+        permission_mode = "bypassPermissions" if can_edit else "plan"
+        args = [self._cli_path, "-p", "--output-format", "json", "--permission-mode", permission_mode]
+        env = self._build_env(credential, label)
+        lock = _LOCAL_SESSION_LOCK if credential == _LOCAL_SESSION else contextlib.nullcontext()
+        try:
+            with lock:
+                result = subprocess.run(
+                    args,
+                    input=prompt,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=self.AGENTIC_TIMEOUT_SECONDS,
+                    env=env,
+                    cwd=project_path,
+                )
+        except subprocess.TimeoutExpired as exc:
+            raise ProviderError(
+                f"{self.name.value}: агент не уложился в {self.AGENTIC_TIMEOUT_SECONDS}с: {exc}"
+            ) from exc
+        except OSError as exc:
+            raise ProviderError(f"{self.name.value} CLI error: {exc}") from exc
+
+        output = result.stdout.strip()
+        if not output:
+            error_text = result.stderr.strip() or f"код возврата {result.returncode}"
+            raise ProviderError(
+                f"{self.name.value} агент завершился с кодом {result.returncode}: {error_text}"
+            )
+        try:
+            data = json.loads(output)
+        except ValueError as exc:
+            raise ProviderError(f"{self.name.value}: не удалось разобрать JSON-ответ агента: {exc}") from exc
+        if data.get("is_error") or result.returncode != 0:
+            raise ProviderError(f"{self.name.value} агент: {data.get('result') or data}")
+
+        usage = data.get("usage") or {}
+        self._quota_tracker.record(
+            model=None,
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+            account_label=label,
+        )
+        return ProviderResult(
+            text=data.get("result", ""),
+            model=None,
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
             raw=data,
         )
 

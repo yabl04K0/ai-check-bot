@@ -35,6 +35,17 @@ GATE_GROUP = -100  # ниже (раньше) любой другой групп�
 _warned_unconfigured = False
 
 
+def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """В отличие от is_authorized (пускает ли бот вообще этого юзера),
+    это "тот самый единственный владелец из ADMIN_TG_ID" — при
+    незаданном ADMIN_TG_ID (открытый режим, см. is_authorized ниже)
+    возвращает False для всех, а не True, т.к. открывать 👑 Админку
+    всем подряд в этом режиме не нужно."""
+    settings = context.application.bot_data["settings"]
+    user = update.effective_user
+    return bool(settings.admin_tg_id and user and user.id == settings.admin_tg_id)
+
+
 def is_authorized(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     settings = context.application.bot_data["settings"]
     if not settings.admin_tg_id:

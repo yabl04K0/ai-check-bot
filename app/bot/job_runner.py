@@ -22,72 +22,25 @@ from app.db.session import get_session
 from app.logging_setup import log_action
 from app.notifications.webhook import notify_external
 from app.providers.ai_autonomy import job_needs_manual_approval
-from app.providers.base import AIProvider, ProviderResult, RunOptions
+from app.providers.chain_fallback import ChainFallbackProvider
+from app.providers.note_tracking import NoteTrackingProvider as _NoteTrackingProvider
+from app.providers.prompt_augment import PromptAugmentProvider
 from app.providers.registry import ProviderRegistry
 from app.providers.router import NoProviderAvailableError, pick_provider
 from app.providers.success_history import compute_success_scores
 from app.registry_store.sync import sync_project_findings
+from app.tasks.archive_export import build_handoff_markdown
 from app.tasks.factory import build_pipeline
+from app.tasks.handover import run_handover
 from app.tasks.pipeline import PipelineInterrupted, StepContext
 from app.tasks.queue import JobQueue
 from app.tasks.types import TASK_TYPE_LABELS
 
 logger = logging.getLogger(__name__)
 
-class _NoteTrackingProvider:
-    """Прозрачная обёртка вокруг AIProvider для одной job:
-    1. После каждого run_prompt сохраняет короткий фрагмент ответа в
-       Job.progress_detail — чтобы прогресс в Telegram показывал не
-       только номер шага, но и что ИИ реально только что сказал/сделал.
-    2. Логирует ПОЛНЫЙ промпт и ПОЛНЫЙ ответ (не обрезанные до 400
-       символов, как progress_detail) через стандартный logging — в тот
-       же файл, что уже читается для диагностики (см. запрос пользователя
-       "мало инфы, сделай логирование всех ответов"). Ошибки уже логируются
-       выше по стеку (start_job's logger.exception с полным traceback) —
-       тут не дублируем, только успешные вызовы.
-
-    Пишет через свою короткую сессию (get_session()), не через
-    ctx.session — Fleet-checkers/критики зовут run_prompt из нескольких
-    потоков параллельно (ThreadPoolExecutor, см. app.tasks.protocol_full),
-    а ctx.session на всех один и не потокобезопасна; тот же приём, что у
-    app.providers.quota.QuotaTracker.record()."""
-
-    def __init__(self, inner: AIProvider, job_id: int) -> None:
-        self._inner = inner
-        self._job_id = job_id
-
-    def __getattr__(self, name):
-        return getattr(self._inner, name)
-
-    def run_prompt(self, prompt: str, options: RunOptions | None = None) -> ProviderResult:
-        logger.info(
-            "Job #%s [%s] ПРОМПТ (%d симв.):\n%s",
-            self._job_id,
-            self._inner.name.value,
-            len(prompt),
-            prompt[:3000] + ("…[обрезано]" if len(prompt) > 3000 else ""),
-        )
-        result = self._inner.run_prompt(prompt, options)
-        logger.info(
-            "Job #%s [%s] ОТВЕТ (%d симв., %d+%d ток.):\n%s",
-            self._job_id,
-            self._inner.name.value,
-            len(result.text),
-            result.input_tokens,
-            result.output_tokens,
-            result.text[:6000] + ("…[обрезано]" if len(result.text) > 6000 else ""),
-        )
-        snippet = " ".join(result.text.split())[:400]
-        if snippet:
-            with get_session() as session:
-                job = session.get(Job, self._job_id)
-                if job is not None:
-                    job.progress_detail = snippet
-        return result
-
-
 CANCEL_REQUESTS: set[int] = set()  # job_id-ки, отменённые пользователем
 PAUSE_REQUESTS: set[int] = set()  # job_id-ки, поставленные на ⏸ Паузу
+ARCHIVE_REQUESTS: set[int] = set()  # job_id-ки, остановленные через 📦 Архив
 # job_id-ки, для которых человек уже тапнул "✅ Разрешить" на экране
 # подтверждения запуска (см. _request_start_approval) — без этого набора
 # start_job() зациклился бы, повторно требуя подтверждение самого себя.
@@ -167,8 +120,12 @@ async def start_job(application: Application, job_id: int) -> None:
 
     log_action(str(chat_id or "system"), "job_finished", f"#{job_id} status={status.value}")
 
+    is_archive = job_id in ARCHIVE_REQUESTS
+    ARCHIVE_REQUESTS.discard(job_id)
     if chat_id:
-        await _deliver_outcome(application, job_id, chat_id, status, progress_message)
+        await _deliver_outcome(application, job_id, chat_id, status, progress_message, is_archive=is_archive)
+        if is_archive:
+            await _send_handoff_document(application, job_id, chat_id)
 
     # Продвигаем очередь — берём следующую задачу, если освободились.
     with get_session() as session:
@@ -233,7 +190,8 @@ def _run_pipeline_blocking(application: Application, job_id: int) -> dict:
             job.provider_mode = ProviderMode.AUTO
             session.commit()
 
-        provider = _NoteTrackingProvider(registry.get(job.provider), job.id)
+        chain = ChainFallbackProvider(registry.get(job.provider), registry, job.task_type, job.id)
+        provider = _NoteTrackingProvider(PromptAugmentProvider(chain, force_limits=True), job.id)
         projects = list(job.projects)
         pipeline = build_pipeline(job.task_type)
         ctx = StepContext(
@@ -245,6 +203,8 @@ def _run_pipeline_blocking(application: Application, job_id: int) -> dict:
             scope=job.scope,
             cancel_requested=lambda: job_id in CANCEL_REQUESTS,
             paused_requested=lambda: job_id in PAUSE_REQUESTS,
+            provider_registry=registry,
+            application=application,
         )
         try:
             pipeline.run(ctx, queue)
@@ -255,6 +215,8 @@ def _run_pipeline_blocking(application: Application, job_id: int) -> dict:
         finally:
             CANCEL_REQUESTS.discard(job_id)
             PAUSE_REQUESTS.discard(job_id)
+
+        session.refresh(job, attribute_names=["provider"])
 
         if job.status == JobStatus.DONE:
             for project in projects:
@@ -275,10 +237,17 @@ def _run_pipeline_blocking(application: Application, job_id: int) -> dict:
                 sync_project_findings(session, project)
             session.commit()
 
+        # HANDOVER — та же синхронизация LAST_PROMPT/STATE_LOG/PROJECT_MEMORY,
+        # что CLAUDE.md требует от ручной AI-сессии на конце "разговора" (см.
+        # app.tasks.handover); для бота конец прогона job'ы — тот же рубеж.
+        # PAUSED_MANUAL сюда не долетает — pipeline.run() не возвращается,
+        # пока пауза не снята (см. Pipeline._wait_while_paused).
+        run_handover(job, projects)
+
         return dict(ctx.state)
 
 
-_ACTIVE_STATUSES = (JobStatus.RUNNING, JobStatus.PAUSED_MANUAL)
+_ACTIVE_STATUSES = (JobStatus.RUNNING, JobStatus.PAUSED_MANUAL, JobStatus.PAUSED_QUESTION)
 
 
 async def _progress_loop(application, job_id: int, chat_id: int | None, message) -> None:
@@ -303,13 +272,16 @@ async def _progress_loop(application, job_id: int, chat_id: int | None, message)
 
 
 async def _deliver_outcome(
-    application, job_id: int, chat_id: int, status: JobStatus, progress_message
+    application, job_id: int, chat_id: int, status: JobStatus, progress_message, *, is_archive: bool = False
 ) -> None:
     with get_session() as session:
         job = session.get(Job, job_id)
         is_check = job.task_type.value.startswith("check")
 
-        if status == JobStatus.DONE:
+        if is_archive and status == JobStatus.CANCELLED:
+            text = "📦 Задача остановлена и заархивирована — файл-хендовер следующим сообщением."
+            markup = None
+        elif status == JobStatus.DONE:
             summary = render_report_header(job)
             report_text = job.report_text or "Готово."
             text = f"{summary}\n\n{report_text[:3500]}"
@@ -340,3 +312,22 @@ async def _deliver_outcome(
             slack_webhook_url=notifications.slack_webhook_url,
             discord_webhook_url=notifications.discord_webhook_url,
         )
+
+
+async def _send_handoff_document(application, job_id: int, chat_id: int) -> None:
+    with get_session() as session:
+        job = session.get(Job, job_id)
+        if job is None:
+            return
+        projects = list(job.projects)
+        markdown = build_handoff_markdown(job, projects)
+
+    try:
+        await application.bot.send_document(
+            chat_id,
+            document=markdown.encode("utf-8"),
+            filename=f"job_{job_id}_handoff.md",
+            caption="Вставь содержимое файла в новый чат с любой другой ИИ, чтобы продолжить оттуда.",
+        )
+    except TelegramError:
+        logger.exception("Не удалось отправить хендовер-файл по job #%s", job_id)

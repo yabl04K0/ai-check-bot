@@ -17,6 +17,8 @@ from sqlalchemy import func, select
 from app.db.models import ProviderName, QuotaUsageLog
 from app.db.session import get_session
 from app.providers.base import QuotaEstimate
+from app.providers.claude_code_usage import fetch_real_usage as fetch_claude_code_primary_usage
+from app.providers.rate_limit_headers import estimate_from_scraped
 
 WEEK = timedelta(days=7)
 FIVE_HOURS = timedelta(hours=5)
@@ -75,6 +77,60 @@ class QuotaTracker:
             hours_to_reset = max(0.0, (reset_at - datetime.now(timezone.utc)).total_seconds() / 3600)
 
         return QuotaEstimate(used_pct=used_pct, hours_to_reset=hours_to_reset)
+
+
+def account_quota_estimate(
+    provider: ProviderName, account_label: str | None, weekly_token_budget: int | None
+) -> QuotaEstimate:
+    if not weekly_token_budget:
+        return QuotaEstimate(used_pct=None, hours_to_reset=None)
+
+    since = datetime.now(timezone.utc) - WEEK
+    with get_session() as session:
+        tokens_sum = func.coalesce(func.sum(QuotaUsageLog.input_tokens + QuotaUsageLog.output_tokens), 0)
+        total = session.scalar(
+            select(tokens_sum).where(
+                QuotaUsageLog.provider == provider,
+                QuotaUsageLog.account_label == account_label,
+                QuotaUsageLog.ts >= since,
+            )
+        )
+        oldest = session.scalar(
+            select(func.min(QuotaUsageLog.ts)).where(
+                QuotaUsageLog.provider == provider,
+                QuotaUsageLog.account_label == account_label,
+                QuotaUsageLog.ts >= since,
+            )
+        )
+
+    used_pct = min(100.0, 100.0 * total / weekly_token_budget)
+    hours_to_reset = None
+    if oldest is not None:
+        if oldest.tzinfo is None:
+            oldest = oldest.replace(tzinfo=timezone.utc)
+        reset_at = oldest + WEEK
+        hours_to_reset = max(0.0, (reset_at - datetime.now(timezone.utc)).total_seconds() / 3600)
+
+    return QuotaEstimate(used_pct=used_pct, hours_to_reset=hours_to_reset)
+
+
+def account_quota_estimate_for(registry, provider: ProviderName, account_label: str) -> QuotaEstimate:
+    inner_provider = registry.get(provider)
+
+    if provider == ProviderName.CLAUDE_CODE and account_label == "primary":
+        real = fetch_claude_code_primary_usage(getattr(inner_provider, "_cli_path", None))
+        if real is not None:
+            return real
+
+    last_headers = getattr(inner_provider, "_last_rate_limit", None)
+    if last_headers:
+        real = estimate_from_scraped(last_headers)
+        if real is not None:
+            return real
+
+    tracker = getattr(inner_provider, "_quota_tracker", None)
+    budget = getattr(tracker, "weekly_token_budget", None) if tracker else None
+    return account_quota_estimate(provider, account_label, budget)
 
 
 def account_usage_summary(provider: ProviderName) -> dict[str | None, tuple[int, int]]:

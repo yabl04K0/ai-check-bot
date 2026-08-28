@@ -39,6 +39,36 @@ def test_gather_registry_lists_open_findings(tmp_path):
     assert "сломано" in text
 
 
+def test_gather_project_memory_unavailable_without_local_path():
+    assert ctxdata.gather_project_memory(_project()) == ctxdata.UNAVAILABLE
+
+
+def test_gather_project_memory_placeholder_when_no_file(tmp_path):
+    assert ctxdata.gather_project_memory(_project(tmp_path)) == ctxdata.NO_PROJECT_MEMORY
+
+
+def test_gather_project_memory_excludes_session_log(tmp_path):
+    (tmp_path / "PROJECT_MEMORY.md").write_text(
+        "# STRUCTURE\narchitecture notes here\n\n# SESSION LOG\n\n--- entry ---\nold\n", encoding="utf-8"
+    )
+    text = ctxdata.gather_project_memory(_project(tmp_path))
+    assert "architecture notes here" in text
+    assert "old" not in text
+
+
+def test_gather_last_prompt_unavailable_without_local_path():
+    assert ctxdata.gather_last_prompt(_project()) == ctxdata.UNAVAILABLE
+
+
+def test_gather_last_prompt_placeholder_when_no_file(tmp_path):
+    assert ctxdata.gather_last_prompt(_project(tmp_path)) == ctxdata.NO_LAST_PROMPT
+
+
+def test_gather_last_prompt_reads_file(tmp_path):
+    (tmp_path / "LAST_PROMPT.md").write_text("Продолжи с шага 3\n", encoding="utf-8")
+    assert ctxdata.gather_last_prompt(_project(tmp_path)) == "Продолжи с шага 3"
+
+
 def test_gather_logs_no_logs_dir(tmp_path):
     assert ctxdata.gather_logs(_project(tmp_path)) == "(папки logs/ нет)"
 

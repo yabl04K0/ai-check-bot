@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 
 from app.bot.handlers.github import (
     clear_token,
+    prompt_clear_token,
     prompt_set_token,
     receive_token_text,
 )
@@ -123,6 +124,36 @@ def test_receive_token_ignores_non_admin_even_if_flag_set(db):
 
     assert get_token_override() is None
     assert cursor._github_token != "ghp_from_stranger"
+
+
+def test_receive_token_works_in_open_mode_without_admin_configured(db):
+    """admin_tg_id не задан — официально поддерживаемый "открытый режим"
+    (см. app.bot.access_control.is_authorized), не гипотетический сбой.
+    Раньше вся ветка "Задать/обновить токен" в этом режиме молча не
+    работала НИ ДЛЯ КОГО: сообщение с токеном даже не удалялось из чата
+    (return был раньше update.message.delete()), см. аудит меню."""
+    context, cursor = _context(admin_tg_id=None)
+    context.user_data["awaiting"] = "github_token"
+    update = _message_update("ghp_open_mode_token", admin_tg_id=12345)
+
+    _run(receive_token_text(update, context))
+
+    assert get_token_override() == "ghp_open_mode_token"
+    assert cursor._github_token == "ghp_open_mode_token"
+    update.message.delete.assert_awaited_once()
+
+
+def test_prompt_clear_token_asks_for_confirmation_first(db):
+    update, query = _callback_update()
+    context, _cursor = _context()
+
+    _run(prompt_clear_token(update, context))
+
+    args, kwargs = query.edit_message_text.await_args
+    assert "?" in args[0]
+    callbacks = [b.callback_data for row in kwargs["reply_markup"].inline_keyboard for b in row]
+    assert "gh:token_clear" in callbacks
+    assert "gh:token" in callbacks
 
 
 def test_clear_token_reverts_cursor_provider_to_env_value(db):

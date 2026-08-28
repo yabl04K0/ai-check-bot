@@ -12,6 +12,7 @@ import os
 import subprocess
 
 from app.db.models import ProviderAccountStatus, ProviderName
+from app.providers.agent_permissions import can_push_github
 from app.providers.ai_autonomy import ai_github_token_access_enabled
 from app.providers.base import (
     AIProvider,
@@ -88,7 +89,7 @@ class CursorProvider(AIProvider):
         # токен — явный opt-in через ⚙️ Настройки (см.
         # app.providers.ai_autonomy), с дисклеймером перед включением.
         env = dict(os.environ)
-        if self._github_token and ai_github_token_access_enabled():
+        if self._github_token and ai_github_token_access_enabled() and can_push_github(self.name):
             env["GITHUB_TOKEN"] = self._github_token
         else:
             env.pop("GITHUB_TOKEN", None)

@@ -13,16 +13,20 @@ from telegram import InlineKeyboardMarkup
 
 from app.bot.handlers.settings_admin import (
     confirm_auto_approve,
+    confirm_native_agents,
     confirm_token_access,
     show_settings,
     toggle_auto_approve,
+    toggle_native_agents,
     toggle_token_access,
 )
 from app.providers.ai_autonomy import (
     ai_command_auto_approve_enabled,
     ai_github_token_access_enabled,
+    ai_native_agents_enabled,
     set_ai_command_auto_approve,
     set_ai_github_token_access,
+    set_ai_native_agents_enabled,
 )
 from app.providers.registry import ProviderRegistry
 
@@ -129,3 +133,36 @@ def test_toggling_auto_approve_off_is_immediate(db):
     _run(toggle_auto_approve(update, context))
 
     assert ai_command_auto_approve_enabled() is False
+
+
+def test_first_tap_on_native_agents_shows_disclaimer_without_enabling(db):
+    update, query = _update()
+    context = _context()
+
+    _run(toggle_native_agents(update, context))
+
+    assert ai_native_agents_enabled() is False
+    (text,), kwargs = query.edit_message_text.await_args
+    assert "Дисклеймер" in text
+    assert "bypassPermissions" in text
+
+
+def test_confirm_native_agents_enables(db):
+    update, query = _update()
+    context = _context()
+
+    _run(confirm_native_agents(update, context))
+
+    assert ai_native_agents_enabled() is True
+
+
+def test_toggling_native_agents_off_is_immediate_no_disclaimer(db):
+    set_ai_native_agents_enabled(True)
+    update, query = _update()
+    context = _context()
+
+    _run(toggle_native_agents(update, context))
+
+    assert ai_native_agents_enabled() is False
+    args, kwargs = query.edit_message_text.await_args
+    assert "Дисклеймер" not in args[0]

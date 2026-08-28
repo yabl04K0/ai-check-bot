@@ -12,6 +12,7 @@ from app.providers.claude import ClaudeProvider
 from app.providers.claude_code_cli import ClaudeCodeCliProvider
 from app.providers.codex import CodexProvider
 from app.providers.cursor import CursorProvider
+from app.providers.custom_api import CustomOpenAICompatibleProvider
 from app.providers.deepseek import DeepSeekProvider
 from app.providers.fireworks import FireworksProvider
 from app.providers.gemini import GeminiProvider
@@ -20,6 +21,7 @@ from app.providers.groq import GroqProvider
 from app.providers.key_store import resolve_api_key
 from app.providers.local_llm import LocalLLMProvider
 from app.providers.mistral import MistralProvider
+from app.providers.model_store import resolve_model
 from app.providers.openrouter import OpenRouterProvider
 from app.providers.perplexity import PerplexityProvider
 from app.providers.quota import QuotaTracker
@@ -28,8 +30,8 @@ from app.providers.together import TogetherProvider
 
 def build_providers(settings: Settings) -> dict[ProviderName, AIProvider]:
     p = settings.providers
-    extras = list_extra_secrets  # короткий алиас — "➕ Добавить ещё аккаунт", см. accounts_store
-    return {
+    extras = list_extra_secrets
+    providers: dict[ProviderName, AIProvider] = {
         ProviderName.CLAUDE: ClaudeProvider(
             resolve_api_key(ProviderName.CLAUDE, p),
             QuotaTracker(ProviderName.CLAUDE, p.anthropic_weekly_token_budget),
@@ -39,6 +41,7 @@ def build_providers(settings: Settings) -> dict[ProviderName, AIProvider]:
             p.claude_cli_path,
             resolve_api_key(ProviderName.CLAUDE_CODE, p),
             extra_accounts=extras(ProviderName.CLAUDE_CODE),
+            github_token=resolve_github_token(settings),
         ),
         ProviderName.CODEX: CodexProvider(
             resolve_api_key(ProviderName.CODEX, p),
@@ -53,64 +56,68 @@ def build_providers(settings: Settings) -> dict[ProviderName, AIProvider]:
         ProviderName.GEMINI: GeminiProvider(
             resolve_api_key(ProviderName.GEMINI, p),
             QuotaTracker(ProviderName.GEMINI, p.gemini_weekly_token_budget),
-            model=p.gemini_model,
+            model=resolve_model(ProviderName.GEMINI, p),
             extra_accounts=extras(ProviderName.GEMINI),
         ),
         ProviderName.DEEPSEEK: DeepSeekProvider(
             resolve_api_key(ProviderName.DEEPSEEK, p),
             QuotaTracker(ProviderName.DEEPSEEK, p.deepseek_weekly_token_budget),
-            model=p.deepseek_model,
+            model=resolve_model(ProviderName.DEEPSEEK, p),
             extra_accounts=extras(ProviderName.DEEPSEEK),
         ),
         ProviderName.GROK: GrokProvider(
             resolve_api_key(ProviderName.GROK, p),
             QuotaTracker(ProviderName.GROK, p.grok_weekly_token_budget),
-            model=p.grok_model,
+            model=resolve_model(ProviderName.GROK, p),
             extra_accounts=extras(ProviderName.GROK),
         ),
         ProviderName.GROQ: GroqProvider(
             resolve_api_key(ProviderName.GROQ, p),
             QuotaTracker(ProviderName.GROQ, p.groq_weekly_token_budget),
-            model=p.groq_model,
+            model=resolve_model(ProviderName.GROQ, p),
             extra_accounts=extras(ProviderName.GROQ),
         ),
         ProviderName.MISTRAL: MistralProvider(
             resolve_api_key(ProviderName.MISTRAL, p),
             QuotaTracker(ProviderName.MISTRAL, p.mistral_weekly_token_budget),
-            model=p.mistral_model,
+            model=resolve_model(ProviderName.MISTRAL, p),
             extra_accounts=extras(ProviderName.MISTRAL),
         ),
         ProviderName.OPENROUTER: OpenRouterProvider(
             resolve_api_key(ProviderName.OPENROUTER, p),
             QuotaTracker(ProviderName.OPENROUTER, p.openrouter_weekly_token_budget),
-            model=p.openrouter_model,
+            model=resolve_model(ProviderName.OPENROUTER, p),
             extra_accounts=extras(ProviderName.OPENROUTER),
         ),
         ProviderName.TOGETHER: TogetherProvider(
             resolve_api_key(ProviderName.TOGETHER, p),
             QuotaTracker(ProviderName.TOGETHER, p.together_weekly_token_budget),
-            model=p.together_model,
+            model=resolve_model(ProviderName.TOGETHER, p),
             extra_accounts=extras(ProviderName.TOGETHER),
         ),
         ProviderName.PERPLEXITY: PerplexityProvider(
             resolve_api_key(ProviderName.PERPLEXITY, p),
             QuotaTracker(ProviderName.PERPLEXITY, p.perplexity_weekly_token_budget),
-            model=p.perplexity_model,
+            model=resolve_model(ProviderName.PERPLEXITY, p),
             extra_accounts=extras(ProviderName.PERPLEXITY),
         ),
         ProviderName.FIREWORKS: FireworksProvider(
             resolve_api_key(ProviderName.FIREWORKS, p),
             QuotaTracker(ProviderName.FIREWORKS, p.fireworks_weekly_token_budget),
-            model=p.fireworks_model,
+            model=resolve_model(ProviderName.FIREWORKS, p),
             extra_accounts=extras(ProviderName.FIREWORKS),
         ),
         ProviderName.CEREBRAS: CerebrasProvider(
             resolve_api_key(ProviderName.CEREBRAS, p),
             QuotaTracker(ProviderName.CEREBRAS, p.cerebras_weekly_token_budget),
-            model=p.cerebras_model,
+            model=resolve_model(ProviderName.CEREBRAS, p),
             extra_accounts=extras(ProviderName.CEREBRAS),
         ),
     }
+    providers[ProviderName.CUSTOM] = CustomOpenAICompatibleProvider(
+        resolve_api_key(ProviderName.CUSTOM, p), extra_accounts=extras(ProviderName.CUSTOM)
+    )
+    return providers
 
 
 class ProviderRegistry:

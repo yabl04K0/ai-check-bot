@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import date
+from difflib import SequenceMatcher
 from pathlib import Path
 
 OPEN_FILENAME = "chek_open.md"
@@ -31,6 +32,20 @@ _FIELD_RE = re.compile(r"^-\s*(?P<key>\w+):\s*(?P<value>.*)$")
 
 SEVERITY_EMOJI_TO_NAME = {"🟥": "critical", "🟧": "high", "🟨": "medium"}
 NAME_TO_SEVERITY_EMOJI = {v: k for k, v in SEVERITY_EMOJI_TO_NAME.items()}
+
+DEDUP_SIMILARITY_THRESHOLD = 0.86
+
+
+def _file_part(file_symbol: str) -> str:
+    return file_symbol.split("::")[0].split(":")[0].strip().lower()
+
+
+def _is_reworded_duplicate(existing: RegistryFinding, file_symbol: str, description: str) -> bool:
+    if _file_part(existing.file_symbol) != _file_part(file_symbol):
+        return False
+    text_a = f"{existing.file_symbol} {existing.description}".strip().lower()
+    text_b = f"{file_symbol} {description}".strip().lower()
+    return SequenceMatcher(None, text_a, text_b).ratio() >= DEDUP_SIMILARITY_THRESHOLD
 
 
 @dataclass
@@ -205,7 +220,9 @@ def register_or_bump_finding(
 
     for bucket in (registry.later, registry.never):
         for existing in bucket:
-            if existing.file_symbol == finding.file_symbol:
+            if existing.file_symbol == finding.file_symbol or _is_reworded_duplicate(
+                existing, finding.file_symbol, finding.description
+            ):
                 if not ignore_deferred:
                     return "deferred_skipped"
                 bucket.remove(existing)

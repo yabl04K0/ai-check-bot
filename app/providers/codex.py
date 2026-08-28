@@ -99,6 +99,7 @@ class CodexProvider(AIProvider):
             pairs,
             lambda label, api_key: self._run_once(api_key, prompt, options, account_label=label),
             not_configured_hint="OPENAI_API_KEY не задан — залогинься в Настройках → 🔌 Провайдеры ИИ.",
+            forced_account_label=options.forced_account_label,
         )
 
     def _run_once(

@@ -71,6 +71,12 @@ class RunOptions:
     max_tokens: int = 4096
     temperature: float = 0.2
     extra: dict = field(default_factory=dict)
+    # Форсирует конкретный аккаунт вместо обычного перебора всех
+    # (run_with_account_fallback) — см. app.providers.tiers: приоритеты
+    # аккаунтов ("глава"/"средний"/"делегация") требуют направить ИМЕННО
+    # этот вызов на ИМЕННО этот аккаунт, а не первый живой по порядку.
+    # None (по умолчанию) = прежнее поведение, режим приоритетов выключен.
+    forced_account_label: str | None = None
 
 
 class AIProvider(ABC):

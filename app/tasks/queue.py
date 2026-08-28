@@ -52,9 +52,7 @@ class JobQueue:
         return job
 
     def is_busy(self) -> bool:
-        """RUNNING занимает воркер; PAUSED_MANUAL тоже — пайплайн жив, просто
-        стоит на месте (ждёт ▶️ Продолжить), не отдаёт слот следующей задаче."""
-        busy_statuses = (JobStatus.RUNNING, JobStatus.PAUSED_MANUAL)
+        busy_statuses = (JobStatus.RUNNING, JobStatus.PAUSED_MANUAL, JobStatus.PAUSED_QUESTION)
         return self._session.scalar(select(Job).where(Job.status.in_(busy_statuses))) is not None
 
     def position_in_queue(self, job_id: int) -> int:
@@ -107,6 +105,13 @@ class JobQueue:
         job.status = JobStatus.CANCELLED
         job.finished_at = datetime.now(timezone.utc)
 
+    def add_live_note(self, job: Job, text: str) -> None:
+        from datetime import datetime, timezone
+
+        stamp = datetime.now(timezone.utc).strftime("%H:%M")
+        line = f"[{stamp}] {text}"
+        job.live_notes = f"{job.live_notes}\n{line}" if job.live_notes else line
+
     def mark_error(self, job: Job, detail: str) -> None:
         from datetime import datetime, timezone
 
@@ -134,7 +139,9 @@ class JobQueue:
         from datetime import datetime, timezone
 
         orphaned = self._session.scalars(
-            select(Job).where(Job.status.in_((JobStatus.RUNNING, JobStatus.PAUSED_MANUAL)))
+            select(Job).where(
+                Job.status.in_((JobStatus.RUNNING, JobStatus.PAUSED_MANUAL, JobStatus.PAUSED_QUESTION))
+            )
         ).all()
         for job in orphaned:
             job.status = JobStatus.ERROR

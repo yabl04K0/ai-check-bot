@@ -30,6 +30,8 @@ from app.db.session import get_session
 
 _KEY_GITHUB_TOKEN_ACCESS = "ai_github_token_access"
 _KEY_COMMAND_AUTO_APPROVE = "ai_command_auto_approve"
+_KEY_NATIVE_AGENTS = "ai_native_agents_enabled"
+_KEY_SHOW_LIMITS_TO_MODEL = "ai_show_limits_to_model"
 
 
 def _get_bool(key: str) -> bool:
@@ -61,6 +63,36 @@ def ai_command_auto_approve_enabled() -> bool:
 
 def set_ai_command_auto_approve(enabled: bool) -> None:
     _set_bool(_KEY_COMMAND_AUTO_APPROVE, enabled)
+
+
+def ai_native_agents_enabled() -> bool:
+    """Разрешён ли вообще запуск НАСТОЯЩИХ агентов Claude Code (реальный
+    доступ к файлам/bash в проекте через --permission-mode bypassPermissions,
+    см. app.providers.claude_code_cli.ClaudeCodeCliProvider.run_agentic_task)
+    — принципиально другой уровень риска, чем остальные тумблеры этого
+    модуля: там ИИ только СОВЕТУЕТ (текст промпта/патча), тут реально
+    исполняет. Выключено по умолчанию, требует явного opt-in с
+    дисклеймером (см. app.bot.handlers.settings_admin).
+
+    Само по себе не решает, нужен ли тап "Разрешить" перед КАЖДЫМ
+    запуском — за это отвечает ai_command_auto_approve_enabled() (тот же
+    тумблер, что уже используется для одобрения запуска job'ы, см. запрос
+    пользователя: "выбор в начале будут ли вопросы или ии сам будет
+    выполнять" — включён auto-approve, агент стартует сразу; выключен —
+    сначала уходит кнопка подтверждения, см. app.ai_chat.approvals)."""
+    return _get_bool(_KEY_NATIVE_AGENTS)
+
+
+def set_ai_native_agents_enabled(enabled: bool) -> None:
+    _set_bool(_KEY_NATIVE_AGENTS, enabled)
+
+
+def ai_show_limits_to_model_enabled() -> bool:
+    return _get_bool(_KEY_SHOW_LIMITS_TO_MODEL)
+
+
+def set_ai_show_limits_to_model(enabled: bool) -> None:
+    _set_bool(_KEY_SHOW_LIMITS_TO_MODEL, enabled)
 
 
 def job_needs_manual_approval() -> bool:

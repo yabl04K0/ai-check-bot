@@ -11,7 +11,8 @@ from types import SimpleNamespace
 from app.bot.formatting import render_progress
 from app.db.models import Job, ProviderName, QuotaUsageLog, TaskType
 from app.db.session import get_session
-from app.providers.quota import QuotaTracker, account_usage_summary
+from app.providers import circuit_breaker
+from app.providers.quota import QuotaTracker, account_quota_estimate, account_usage_summary
 
 
 def _log(provider, account_label, input_tokens, output_tokens, hours_ago):
@@ -97,6 +98,107 @@ def test_limits_text_shows_usage_per_provider(db):
 
     assert "claude_code" in text
     assert "primary" in text
+
+
+def test_account_quota_estimate_none_without_budget(db):
+    estimate = account_quota_estimate(ProviderName.GROQ, "primary", None)
+    assert estimate.used_pct is None
+
+
+def test_account_quota_estimate_scoped_to_one_account(db):
+    _log(ProviderName.GROQ, "primary", 5000, 0, hours_ago=1)
+    _log(ProviderName.GROQ, "extra:1", 9000, 0, hours_ago=1)
+
+    primary_estimate = account_quota_estimate(ProviderName.GROQ, "primary", 10000)
+    extra_estimate = account_quota_estimate(ProviderName.GROQ, "extra:1", 10000)
+
+    assert primary_estimate.used_pct == 50.0
+    assert extra_estimate.used_pct == 90.0
+
+
+def test_account_quota_estimate_caps_at_100_percent(db):
+    _log(ProviderName.GROQ, "primary", 50000, 0, hours_ago=1)
+    estimate = account_quota_estimate(ProviderName.GROQ, "primary", 10000)
+    assert estimate.used_pct == 100.0
+
+
+def test_account_quota_estimate_reports_hours_to_reset(db):
+    _log(ProviderName.GROQ, "primary", 1000, 0, hours_ago=24)
+    estimate = account_quota_estimate(ProviderName.GROQ, "primary", 10000)
+    assert estimate.hours_to_reset is not None
+    assert 143 < estimate.hours_to_reset < 145
+
+
+def test_limits_text_shows_broken_indicator_for_tripped_circuit_breaker(db):
+    from app.bot.handlers.menu import limits_text
+    from app.providers.claude_code_cli import ClaudeCodeCliProvider
+    from app.providers.registry import ProviderRegistry
+
+    _log(ProviderName.CLAUDE_CODE, "primary", 1000, 0, hours_ago=1)
+    registry = ProviderRegistry({ProviderName.CLAUDE_CODE: ClaudeCodeCliProvider("claude")})
+    context = SimpleNamespace(application=SimpleNamespace(bot_data={"provider_registry": registry}))
+    circuit_breaker.record_failure(ProviderName.CLAUDE_CODE, "primary")
+
+    text = limits_text(context)
+
+    assert "🔴" in text
+    assert "не отвечает" in text
+
+
+def test_limits_text_no_broken_indicator_for_healthy_account(db):
+    from app.bot.handlers.menu import limits_text
+    from app.providers.claude_code_cli import ClaudeCodeCliProvider
+    from app.providers.registry import ProviderRegistry
+
+    _log(ProviderName.CLAUDE_CODE, "primary", 1000, 0, hours_ago=1)
+    registry = ProviderRegistry({ProviderName.CLAUDE_CODE: ClaudeCodeCliProvider("claude")})
+    context = SimpleNamespace(application=SimpleNamespace(bot_data={"provider_registry": registry}))
+
+    text = limits_text(context)
+
+    assert "🔴" not in text
+
+
+def test_limits_text_shows_real_percent_for_claude_code_primary(db, monkeypatch):
+    import app.bot.handlers.menu as menu_module
+    from app.bot.handlers.menu import limits_text
+    from app.providers.base import QuotaEstimate
+    from app.providers.claude_code_cli import ClaudeCodeCliProvider
+    from app.providers.registry import ProviderRegistry
+
+    _log(ProviderName.CLAUDE_CODE, "primary", 1000, 0, hours_ago=1)
+    registry = ProviderRegistry({ProviderName.CLAUDE_CODE: ClaudeCodeCliProvider("claude")})
+    context = SimpleNamespace(application=SimpleNamespace(bot_data={"provider_registry": registry}))
+    monkeypatch.setattr(
+        menu_module,
+        "account_quota_estimate_for",
+        lambda registry, name, label: QuotaEstimate(used_pct=33.0, hours_to_reset=None, is_estimate=False),
+    )
+
+    text = limits_text(context)
+
+    assert "🧪 реально: 33%" in text
+
+
+def test_limits_text_no_real_percent_when_unavailable(db, monkeypatch):
+    import app.bot.handlers.menu as menu_module
+    from app.bot.handlers.menu import limits_text
+    from app.providers.base import QuotaEstimate
+    from app.providers.claude_code_cli import ClaudeCodeCliProvider
+    from app.providers.registry import ProviderRegistry
+
+    _log(ProviderName.CLAUDE_CODE, "primary", 1000, 0, hours_ago=1)
+    registry = ProviderRegistry({ProviderName.CLAUDE_CODE: ClaudeCodeCliProvider("claude")})
+    context = SimpleNamespace(application=SimpleNamespace(bot_data={"provider_registry": registry}))
+    monkeypatch.setattr(
+        menu_module,
+        "account_quota_estimate_for",
+        lambda registry, name, label: QuotaEstimate(used_pct=None, hours_to_reset=None),
+    )
+
+    text = limits_text(context)
+
+    assert "реально:" not in text
 
 
 def test_limits_text_reports_empty_state(db):

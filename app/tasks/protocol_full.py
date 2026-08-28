@@ -3,15 +3,31 @@
 Провайдер для каждого шага приходит из ctx.provider — единственный,
 выбранный роутером на весь прогон (никакого хардкода Claude/Opus/Sonnet
 внутри шагов; какая именно модель используется — решает provider.run_prompt
-через RunOptions.model, если понадобится тонкая настройка позже).
+через RunOptions.model, если понадобится тонкая настройка позже) — ЕСЛИ
+режим приоритетов аккаунтов выключен (см. app.providers.tiers). Включён —
+шаги ниже, помеченные конкретным AccountPriority, просят
+run_prompt_with_tier() направить вызов на аккаунт нужного тира (тихий
+фолбэк на ctx.provider, если под тир ничего не назначено).
 """
 
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
+from app.db.models import ProviderMode
+from app.providers import circuit_breaker
 from app.providers.base import ProviderError, RunOptions
+from app.providers.quota import account_quota_estimate_for
+from app.providers.tiers import (
+    AccountPriority,
+    accounts_in_tier,
+    delegation_mode_enabled,
+    job_has_tier_overrides,
+    job_tier_assignments,
+    run_prompt_with_tier,
+)
 from app.registry_store.store import RegistryFinding, register_or_bump_finding
+from app.scheduler.quota_warnings import WARN_THRESHOLD_PCT
 from app.tasks import project_context as ctxdata
 from app.tasks import scope as scope_util
 from app.tasks.findings_parse import parse_structured_findings
@@ -36,6 +52,12 @@ class Step1to4Registry(Step):
         parts = []
         for project in ctx.projects:
             parts.append(f"### {project.name}")
+            parts.append(
+                "**Архитектура и история (PROJECT_MEMORY.md):**\n" + ctxdata.gather_project_memory(project)
+            )
+            parts.append(
+                "**Продолжение с прошлой сессии (LAST_PROMPT.md):**\n" + ctxdata.gather_last_prompt(project)
+            )
             parts.append("**Реестр:**\n" + ctxdata.gather_registry(project))
             parts.append("**Тесты:**\n" + ctxdata.gather_tests(project))
             parts.append("**Логи:**\n" + ctxdata.gather_logs(project))
@@ -64,20 +86,83 @@ class Step4bWebResearch(Step):
         ctx.state["web_research"] = result.text
 
 
+PLAN_APPROVAL_OK_WORDS = {"да", "ок", "окей", "yes", "ok", "+", "го", "давай"}
+
+
+def _delegation_budget(ctx: StepContext) -> tuple[int, int] | None:
+    registry = ctx.provider_registry
+    if registry is None:
+        return None
+    job_override = job_has_tier_overrides(ctx.job.id)
+    if not job_override and not delegation_mode_enabled():
+        return None
+
+    if job_override:
+        accounts = [a for a, p in job_tier_assignments(ctx.job.id).items() if p == AccountPriority.DELEGATION]
+    else:
+        accounts = accounts_in_tier(AccountPriority.DELEGATION)
+    if not accounts:
+        return None
+
+    usable = 0
+    for account in accounts:
+        if registry.is_disabled(account.provider):
+            continue
+        if circuit_breaker.is_open(account.provider, account.account_label):
+            continue
+        estimate = account_quota_estimate_for(registry, account.provider, account.account_label)
+        if estimate.used_pct is not None and estimate.used_pct >= WARN_THRESHOLD_PCT:
+            continue
+        usable += 1
+    return usable, len(accounts)
+
+
 class Step5FleetPlanner(Step):
     label = "5. Fleet-planner — делит проект на домены"
 
     def run(self, ctx: StepContext) -> None:
+        target_domains = FLEET_CHECKER_DOMAINS_DEFAULT
+        budget_note = ""
+        budget = _delegation_budget(ctx)
+        if budget is not None:
+            usable, total = budget
+            if usable < FLEET_CHECKER_DOMAINS_DEFAULT:
+                target_domains = max(1, usable)
+                budget_note = (
+                    f"Внимание: из {total} аккаунтов делегации сейчас реально доступно "
+                    f"{usable} (лимит/cooldown) — урезаю флот до {target_domains}."
+                )
+
         prompt = (
             f"{_project_summary(ctx)}\n\n"
             f"Контекст:\n{ctx.state.get('intake', '')}\n\n"
-            f"Раздели аудит на {FLEET_CHECKER_DOMAINS_DEFAULT} независимых доменов "
+            f"Раздели аудит на {target_domains} независимых доменов "
             "(например: auth, api, db, frontend — под конкретный проект). "
+            f"{budget_note} "
             "Ответь построчно, только названия доменов, без нумерации и пояснений."
         )
-        result = ctx.provider.run_prompt(prompt, RunOptions(system="Ты — fleet-planner для аудита кода."))
+        result = run_prompt_with_tier(
+            ctx, AccountPriority.HEAD, prompt, RunOptions(system="Ты — fleet-planner для аудита кода.")
+        )
         domains = [line.strip("- ").strip() for line in result.text.splitlines() if line.strip()]
-        ctx.state["domains"] = domains[:FLEET_CHECKER_DOMAINS_DEFAULT] or ["general"]
+        domains = domains[:target_domains] or ["general"]
+        if budget_note:
+            ctx.state["fleet_budget_note"] = budget_note
+
+        if ctx.job.provider_mode == ProviderMode.MANUAL:
+            question = (
+                f"План аудита — {len(domains)} доменов: {', '.join(domains)}."
+                f"{(' ' + budget_note) if budget_note else ''}\n"
+                "Ответь 'да' чтобы запустить флот, или пришли свой список доменов "
+                "через запятую чтобы изменить план."
+            )
+            answer = ctx.ask_user(question)
+            if answer and answer.strip().lower() not in PLAN_APPROVAL_OK_WORDS:
+                edited = [d.strip() for d in answer.split(",") if d.strip()]
+                if edited:
+                    domains = edited[:FLEET_CHECKER_DOMAINS_DEFAULT]
+
+        ctx.state["domains"] = domains
 
 
 class Step6FleetCheckers(Step):
@@ -94,7 +179,12 @@ class Step6FleetCheckers(Step):
                 "нарушения инвариантов. Список находок с severity "
                 "(critical/high/medium) и кратким описанием."
             )
-            result = ctx.provider.run_prompt(prompt, RunOptions(system="Ты — fleet-checker, только чтение."))
+            result = run_prompt_with_tier(
+                ctx,
+                AccountPriority.DELEGATION,
+                prompt,
+                RunOptions(system="Ты — fleet-checker, только чтение."),
+            )
             return domain, result.text
 
         with ThreadPoolExecutor(max_workers=min(len(domains), 4)) as pool:
@@ -122,7 +212,9 @@ class Step8GapFinder(Step):
             "Найди пробелы: что могли упустить checkers (edge cases, "
             "не покрытые домены, скрытые зависимости между находками)."
         )
-        result = ctx.provider.run_prompt(prompt, RunOptions(system="Ты — gap-finder, ищешь пропущенное."))
+        result = run_prompt_with_tier(
+            ctx, AccountPriority.HEAD, prompt, RunOptions(system="Ты — gap-finder, ищешь пропущенное.")
+        )
         ctx.state["gaps"] = result.text
 
 
@@ -197,8 +289,42 @@ class Step9Fixer(Step):
             "и краткое объяснение. Фикс НЕ применяется на диск автоматически — "
             "только текст патча для показа пользователю на Step 13."
         )
-        result = ctx.provider.run_prompt(prompt, RunOptions(system="Ты — fixer, предлагаешь патчи."))
+        result = run_prompt_with_tier(
+            ctx, AccountPriority.MEDIUM, prompt, RunOptions(system="Ты — fixer, предлагаешь патчи.")
+        )
         ctx.state["fix_proposal"] = result.text
+
+
+CRITIC_A_FOCUS = "корректность и регрессии"
+CRITIC_B_FOCUS = "безопасность и производительность"
+CRITIC_A_TIER = AccountPriority.HEAD
+CRITIC_B_TIER = AccountPriority.MEDIUM
+
+
+def _run_critic(
+    ctx: StepContext, focus: str, tier: AccountPriority, fix: str, other_opinion: str | None = None
+) -> str:
+    exchange = (
+        f"\n\nМнение другого критика в прошлом раунде (другой фокус, не обязан совпадать):\n"
+        f"{other_opinion}\nЕсли по существу не согласен с ним — прямо укажи, с чем и почему."
+        if other_opinion
+        else ""
+    )
+    prompt = f"Проверь предложенный фикс с фокусом на {focus}:\n{fix}{exchange}"
+    return run_prompt_with_tier(ctx, tier, prompt, RunOptions(system=f"Ты — critic, фокус: {focus}.")).text
+
+
+def _summarize_disagreement(ctx: StepContext, critic_a: str, critic_b: str) -> str:
+    prompt = (
+        f"Critic-A (фокус: {CRITIC_A_FOCUS}): {critic_a}\n\n"
+        f"Critic-B (фокус: {CRITIC_B_FOCUS}): {critic_b}\n\n"
+        "Критики не сошлись за несколько раундов доработки. В 2-3 предложениях: "
+        "в чём именно конкретный камень преткновения — какой file/symbol, какая "
+        "конкретная претензия каждой стороны."
+    )
+    return run_prompt_with_tier(
+        ctx, AccountPriority.HEAD, prompt, RunOptions(system="Ты суммируешь разногласие между критиками.")
+    ).text
 
 
 class Step10Critics(Step):
@@ -207,15 +333,12 @@ class Step10Critics(Step):
     def run(self, ctx: StepContext) -> None:
         fix_proposal = ctx.state.get("fix_proposal", "")
 
-        def critic(focus: str) -> str:
-            prompt = f"Проверь предложенный фикс с фокусом на {focus}:\n{fix_proposal}"
-            result = ctx.provider.run_prompt(prompt, RunOptions(system=f"Ты — critic, фокус: {focus}."))
-            return result.text
-
         with ThreadPoolExecutor(max_workers=2) as pool:
-            critic_a, critic_b = pool.map(
-                critic, ["корректность и регрессии", "безопасность и производительность"]
-            )
+            futures = [
+                pool.submit(_run_critic, ctx, CRITIC_A_FOCUS, CRITIC_A_TIER, fix_proposal),
+                pool.submit(_run_critic, ctx, CRITIC_B_FOCUS, CRITIC_B_TIER, fix_proposal),
+            ]
+            critic_a, critic_b = (f.result() for f in futures)
         ctx.state["critic_a"] = critic_a
         ctx.state["critic_b"] = critic_b
 
@@ -228,37 +351,44 @@ class Step11ConvergenceLoop(Step):
     def run(self, ctx: StepContext) -> None:
         rounds = 0
         while rounds < MAX_CONVERGENCE_ROUNDS:
-            critic_a = ctx.state.get("critic_a", "").lower()
-            critic_b = ctx.state.get("critic_b", "").lower()
-            converged = any(m in critic_a for m in self.APPROVAL_MARKERS) and any(
-                m in critic_b for m in self.APPROVAL_MARKERS
+            critic_a_text = ctx.state.get("critic_a", "")
+            critic_b_text = ctx.state.get("critic_b", "")
+            converged = any(m in critic_a_text.lower() for m in self.APPROVAL_MARKERS) and any(
+                m in critic_b_text.lower() for m in self.APPROVAL_MARKERS
             )
             if converged:
                 break
             rounds += 1
             prompt = (
                 f"Раунд {rounds}. Доработай фикс с учётом замечаний критиков:\n"
-                f"Critic-A: {ctx.state.get('critic_a', '')}\n"
-                f"Critic-B: {ctx.state.get('critic_b', '')}\n\n"
+                f"Critic-A: {critic_a_text}\n"
+                f"Critic-B: {critic_b_text}\n\n"
                 f"Текущий фикс:\n{ctx.state.get('fix_proposal', '')}"
             )
-            result = ctx.provider.run_prompt(
-                prompt, RunOptions(system="Ты — fixer, дорабатываешь по замечаниям.")
+            result = run_prompt_with_tier(
+                ctx,
+                AccountPriority.HEAD,
+                prompt,
+                RunOptions(system="Ты — fixer, дорабатываешь по замечаниям."),
             )
             ctx.state["fix_proposal"] = result.text
 
-            def critic(focus: str, fix: str = ctx.state["fix_proposal"]) -> str:
-                p = f"Проверь доработанный фикс с фокусом на {focus}:\n{fix}"
-                return ctx.provider.run_prompt(p, RunOptions(system=f"Ты — critic, фокус: {focus}.")).text
-
+            fix_proposal = ctx.state["fix_proposal"]
             with ThreadPoolExecutor(max_workers=2) as pool:
-                critic_a_new, critic_b_new = pool.map(
-                    critic, ["корректность и регрессии", "безопасность и производительность"]
-                )
+                futures = [
+                    pool.submit(_run_critic, ctx, CRITIC_A_FOCUS, CRITIC_A_TIER, fix_proposal, critic_b_text),
+                    pool.submit(_run_critic, ctx, CRITIC_B_FOCUS, CRITIC_B_TIER, fix_proposal, critic_a_text),
+                ]
+                critic_a_new, critic_b_new = (f.result() for f in futures)
             ctx.state["critic_a"], ctx.state["critic_b"] = critic_a_new, critic_b_new
 
         ctx.state["convergence_rounds"] = rounds
-        ctx.state["escalated"] = rounds >= MAX_CONVERGENCE_ROUNDS
+        escalated = rounds >= MAX_CONVERGENCE_ROUNDS
+        ctx.state["escalated"] = escalated
+        if escalated:
+            ctx.state["escalation_crux"] = _summarize_disagreement(
+                ctx, ctx.state.get("critic_a", ""), ctx.state.get("critic_b", "")
+            )
 
 
 class Step12TestWriter(Step):
@@ -269,7 +399,9 @@ class Step12TestWriter(Step):
             "Напиши тесты, покрывающие фикс:\n"
             f"{ctx.state.get('fix_proposal', '')}"
         )
-        result = ctx.provider.run_prompt(prompt, RunOptions(system="Ты — test-writer."))
+        result = run_prompt_with_tier(
+            ctx, AccountPriority.MEDIUM, prompt, RunOptions(system="Ты — test-writer.")
+        )
         ctx.state["tests_written"] = result.text
 
         stash_results = []
@@ -305,11 +437,16 @@ class Step13HumanConfirm(Step):
         deferred = ctx.state.get("findings_deferred_skipped", 0)
         deferred_note = f", не тронуто (уже в Отложено/Never) {deferred}" if deferred else ""
 
+        budget_note = ctx.state.get("fleet_budget_note")
+        budget_line = f"\n⚠️ {budget_note}" if budget_note else ""
+        crux = ctx.state.get("escalation_crux")
+        crux_line = f"\nКамень преткновения: {crux}" if crux else ""
+
         ctx.state["patch"] = ctx.state.get("fix_proposal")
         ctx.state["final_report"] = (
-            f"Домены: {', '.join(ctx.state.get('domains', []))}\n"
+            f"Домены: {', '.join(ctx.state.get('domains', []))}{budget_line}\n"
             f"Раундов конвергенции: {ctx.state.get('convergence_rounds', 0)}"
-            f"{' (эскалировано)' if ctx.state.get('escalated') else ''}\n"
+            f"{' (эскалировано)' if ctx.state.get('escalated') else ''}{crux_line}\n"
             f"Реестр: новых находок {ctx.state.get('findings_registered', 0)}, "
             f"повторных {ctx.state.get('findings_bumped', 0)}{deferred_note}{skipped_note}\n\n"
             f"Отчёт:\n{ctx.state.get('aggregated_report', '')}\n\n"

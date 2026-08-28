@@ -24,6 +24,9 @@ from app.providers.base import (
 )
 from app.providers.multi_account import label_credentials, run_with_account_fallback
 from app.providers.quota import QuotaTracker
+from app.providers.rate_limit_headers import estimate_from_scraped
+from app.providers.rate_limit_headers import scrape as scrape_rate_limit_headers
+from app.proxies.pool import resolve_proxy_url_safe
 
 
 class OpenAICompatibleProvider(AIProvider):
@@ -53,6 +56,7 @@ class OpenAICompatibleProvider(AIProvider):
         self._extra_accounts = list(extra_accounts or [])
         self._model = model or self._default_model
         self._quota_tracker = quota_tracker or QuotaTracker(self.name)
+        self._last_rate_limit: dict[str, str] = {}
 
     def _all_credentials(self) -> list[str]:
         return ([self._api_key] if self._api_key else []) + self._extra_accounts
@@ -81,6 +85,16 @@ class OpenAICompatibleProvider(AIProvider):
         без рестарта процесса (тот же принцип, что у update_api_key)."""
         self._extra_accounts = list(extra_accounts)
 
+    @property
+    def current_model(self) -> str:
+        return self._model
+
+    def update_model(self, model: str) -> None:
+        """Живая смена модели по умолчанию — вызывается ботом сразу после
+        сохранения (app.providers.model_store.set_model_override), без
+        рестарта процесса (тот же принцип, что у update_api_key)."""
+        self._model = model
+
     def run_prompt(self, prompt: str, options: RunOptions | None = None) -> ProviderResult:
         options = options or RunOptions()
         pairs = label_credentials(self._api_key, self._extra_accounts)
@@ -90,6 +104,7 @@ class OpenAICompatibleProvider(AIProvider):
             not_configured_hint=(
                 f"{self._env_var_hint()} не задан — залогинься в Настройках → 🔌 Провайдеры ИИ."
             ),
+            forced_account_label=options.forced_account_label,
         )
 
     def _run_once(
@@ -99,6 +114,8 @@ class OpenAICompatibleProvider(AIProvider):
         if options.system:
             messages.append({"role": "system", "content": options.system})
         messages.append({"role": "user", "content": prompt})
+
+        proxy_url = resolve_proxy_url_safe(self.name, account_label) if account_label else None
 
         try:
             response = httpx.post(
@@ -111,9 +128,14 @@ class OpenAICompatibleProvider(AIProvider):
                     "temperature": options.temperature,
                 },
                 timeout=180,
+                proxy=proxy_url,
             )
+            self._last_rate_limit = scrape_rate_limit_headers(response.headers) or self._last_rate_limit
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            self._last_rate_limit = (
+                scrape_rate_limit_headers(exc.response.headers) or self._last_rate_limit
+            )
             if exc.response.status_code == 429:
                 raise ProviderQuotaExceededError(
                     f"{self._display_name}: превышен лимит запросов (429): {exc}"
@@ -140,4 +162,4 @@ class OpenAICompatibleProvider(AIProvider):
         )
 
     def estimate_quota(self):
-        return self._quota_tracker.estimate()
+        return estimate_from_scraped(self._last_rate_limit) or self._quota_tracker.estimate()

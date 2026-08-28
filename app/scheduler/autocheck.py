@@ -13,22 +13,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 from telegram.ext import Application
 
 from app.bot.job_runner import start_job
-from app.db.models import Job, JobStatus, Project, ProviderMode
+from app.db.models import Job, JobStatus, Project, ProviderAccountStatus, ProviderMode, TaskType
 from app.db.session import get_session
 from app.providers.registry import ProviderRegistry
+from app.providers.router import fallback_chain
 from app.scheduler.decision import decide_autocheck_action
+from app.scheduler.health_monitor import check_and_notify as _health_check_tick
+from app.scheduler.quota_warnings import check_and_warn as _quota_warning_tick
 from app.tasks.queue import JobQueue
 
 logger = logging.getLogger(__name__)
 
 TICK_INTERVAL_MINUTES = 15
 RESUME_INTERVAL_MINUTES = 5
+NIGHTLY_TICK_INTERVAL_MINUTES = 5
+HEALTH_CHECK_INTERVAL_MINUTES = 30
 
 
 _PENDING_AUTO_STATUSES = (
@@ -84,21 +90,88 @@ async def _tick(application: Application) -> None:
         asyncio.create_task(start_job(application, job_id))
 
 
+def _now() -> datetime:
+    return datetime.now()
+
+
+def _is_within_nightly_window(time_str: str, now: datetime) -> bool:
+    try:
+        target = datetime.strptime(time_str, "%H:%M").time()
+    except ValueError:
+        return False
+    target_dt = now.replace(hour=target.hour, minute=target.minute, second=0, microsecond=0)
+    elapsed = (now - target_dt).total_seconds()
+    return 0 <= elapsed < NIGHTLY_TICK_INTERVAL_MINUTES * 60
+
+
+async def _nightly_tick(application: Application) -> None:
+    settings = application.bot_data["settings"]
+    now = _now()
+    today = now.date().isoformat()
+
+    with get_session() as session:
+        already_pending = session.scalar(
+            select(Job).where(
+                Job.provider_mode == ProviderMode.AUTO,
+                Job.status.in_(_PENDING_AUTO_STATUSES),
+            )
+        )
+        if already_pending is not None:
+            return
+
+        projects = session.scalars(select(Project).where(Project.nightly_check_time.is_not(None))).all()
+        queue = JobQueue(session)
+        started_job_id = None
+        enqueued_ids = []
+        for project in projects:
+            if project.nightly_last_run_date == today:
+                continue
+            if not _is_within_nightly_window(project.nightly_check_time, now):
+                continue
+
+            job = queue.enqueue(
+                TaskType.CHECK_FULL,
+                [project.id],
+                provider_mode=ProviderMode.AUTO,
+                scope="all",
+                comment="Ночная проверка по расписанию",
+                created_by_tg_id=settings.admin_tg_id,
+            )
+            project.nightly_last_run_date = today
+            enqueued_ids.append(job.id)
+            if started_job_id is None and not queue.is_busy() and queue.position_in_queue(job.id) == 1:
+                started_job_id = job.id
+
+    if not enqueued_ids:
+        return
+
+    logger.info("Ночная проверка по расписанию: поставлены задачи %s", enqueued_ids)
+    if started_job_id:
+        asyncio.create_task(start_job(application, started_job_id))
+
+
+def _chain_has_available_provider(registry: ProviderRegistry, job: Job) -> bool:
+    for name in fallback_chain(job.task_type):
+        if registry.is_disabled(name):
+            continue
+        provider = registry.get(name)
+        if provider.auth_status().status != ProviderAccountStatus.CONNECTED:
+            continue
+        estimate = provider.estimate_quota()
+        if estimate.used_pct is None or estimate.used_pct < 95:
+            return True
+    return False
+
+
 async def _resume_tick(application: Application) -> None:
-    """HANDOVER-паттерн: задачи на паузе по квоте возвращаются в очередь,
-    как только оценка квоты провайдера снова выглядит приемлемой (или
-    оценки вообще нет — тогда пробуем оптимистично, честной альтернативы
-    без официального API квоты нет)."""
     registry: ProviderRegistry = application.bot_data["provider_registry"]
 
     with get_session() as session:
         paused = session.scalars(select(Job).where(Job.status == JobStatus.PAUSED_QUOTA)).all()
         resumed_ids = []
         for job in paused:
-            if job.provider is not None:
-                estimate = registry.get(job.provider).estimate_quota()
-                if estimate.used_pct is not None and estimate.used_pct >= 95:
-                    continue
+            if not _chain_has_available_provider(registry, job):
+                continue
             job.status = JobStatus.QUEUED
             resumed_ids.append(job.id)
         session.commit()
@@ -133,6 +206,33 @@ def start_scheduler(application: Application) -> AsyncIOScheduler:
         minutes=RESUME_INTERVAL_MINUTES,
         args=[application],
         id="resume_paused_tick",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        _quota_warning_tick,
+        "interval",
+        minutes=TICK_INTERVAL_MINUTES,
+        args=[application],
+        id="quota_warning_tick",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        _nightly_tick,
+        "interval",
+        minutes=NIGHTLY_TICK_INTERVAL_MINUTES,
+        args=[application],
+        id="nightly_check_tick",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        _health_check_tick,
+        "interval",
+        minutes=HEALTH_CHECK_INTERVAL_MINUTES,
+        args=[application],
+        id="health_check_tick",
         max_instances=1,
         coalesce=True,
     )

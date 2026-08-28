@@ -11,9 +11,13 @@ import subprocess
 from pathlib import Path
 
 from app.db.models import Project
+from app.registry_store.last_prompt import read_last_prompt
+from app.registry_store.project_memory import read_architecture
 from app.registry_store.store import read_registry
 
 UNAVAILABLE = "(нет локального чекаута — local_path не задан для проекта)"
+NO_LAST_PROMPT = "(LAST_PROMPT.md пуст — прошлая сессия не оставила заметок)"
+NO_PROJECT_MEMORY = "(PROJECT_MEMORY.md нет в проекте — архитектурная память не заведена)"
 
 
 def local_path(project: Project) -> Path | None:
@@ -35,10 +39,32 @@ def gather_registry(project: Project) -> str:
     # принял по ним решение, и не тратить прогон на их повторное открытие
     # (если не выбран скоуп "ЧЕК всё", см. app.tasks.scope).
     for finding in registry.later:
-        lines.append(f"- [LATER] {finding.file_symbol}: {finding.reason or ''}")
+        updated_note = f" (решено {finding.updated})" if finding.updated else ""
+        lines.append(f"- [LATER]{updated_note} {finding.file_symbol}: {finding.reason or ''}")
     for finding in registry.never:
-        lines.append(f"- [NEVER] {finding.file_symbol}: {finding.reason or ''}")
+        updated_note = f" (решено {finding.updated})" if finding.updated else ""
+        lines.append(f"- [NEVER]{updated_note} {finding.file_symbol}: {finding.reason or ''}")
     return "\n".join(lines)
+
+
+def gather_last_prompt(project: Project) -> str:
+    path = local_path(project)
+    if path is None:
+        return UNAVAILABLE
+    text = read_last_prompt(path)
+    return text if text else NO_LAST_PROMPT
+
+
+def gather_project_memory(project: Project) -> str:
+    """Архитектура+инварианты+история решений (PROJECT_MEMORY.md, без
+    хвоста SESSION LOG — см. registry_store.project_memory.read_architecture
+    и CLAUDE.md "ALWAYS read at session start"). Только для Full ЧЕК —
+    Lite сознательно облегчённый режим (см. protocol_lite.py)."""
+    path = local_path(project)
+    if path is None:
+        return UNAVAILABLE
+    text = read_architecture(path)
+    return text if text else NO_PROJECT_MEMORY
 
 
 def gather_tests(project: Project, *, timeout: int = 300) -> str:

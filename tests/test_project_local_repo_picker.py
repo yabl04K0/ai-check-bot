@@ -110,6 +110,28 @@ def test_pick_local_repo_asks_for_manual_repo_name_when_remote_unknown(tmp_path,
         assert session.query(Project).count() == 0
 
 
+def test_pick_local_repo_escapes_markdown_special_chars_in_name(tmp_path, db):
+    """Реальная папка вида "my_project" содержит нечётное число "_" —
+    без экранирования legacy Markdown-парсер Telegram падает с
+    "Can't find end of Italic entity" (см. app/bot/handlers/projects.py::
+    pick_local_repo, telegram.helpers.escape_markdown)."""
+    repo = tmp_path / "my_project"
+    repo.mkdir()
+    _git("init", "-q", cwd=repo)  # без remote
+
+    update, context, edit = _update_and_context(
+        local_repos_root=tmp_path, user_data={"local_repo_candidates": [str(repo)]}
+    )
+    update.callback_query.data = "proj:add:pick:0"
+
+    _run(pick_local_repo(update, context))
+
+    args, kwargs = edit.await_args
+    assert r"my\_project" in args[0]
+    # Чётные (валидные) markdown-конструкции вроде обратных кавычек не трогаем.
+    assert "`owner/repo`" in args[0]
+
+
 def test_on_text_completes_pending_local_project_with_typed_repo_name(tmp_path, db):
     reply = AsyncMock()
     message = SimpleNamespace(text="owner/typed-repo", reply_text=reply)
@@ -128,6 +150,33 @@ def test_on_text_completes_pending_local_project_with_typed_repo_name(tmp_path, 
         assert project.name == "myrepo"
         assert project.local_path == str(tmp_path / "myrepo")
     assert context.user_data["awaiting"] is None
+
+
+def test_pick_local_repo_returns_to_wizard_when_flow_active(tmp_path, db):
+    """См. аудит меню: добавление проекта из мультивыбора визарда ЧЕК/
+    Фичи/... раньше не умело вернуться на project_multiselect — flow был
+    просто проигнорирован, пользователь улетал на 📁 Проекты, теряя
+    ранее отмеченные проекты без пути назад."""
+    from app.db.models import TaskType
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    _git("init", "-q", cwd=repo)
+    _git("remote", "add", "origin", "https://github.com/owner/myrepo.git", cwd=repo)
+
+    update, context, edit = _update_and_context(
+        local_repos_root=tmp_path,
+        user_data={
+            "local_repo_candidates": [str(repo)],
+            "flow": {"task_type": TaskType.FEATURE, "selected": {5}},
+        },
+    )
+    update.callback_query.data = "proj:add:pick:0"
+
+    _run(pick_local_repo(update, context))
+
+    args, kwargs = edit.await_args
+    assert "мультивыбор" in args[0]
 
 
 def test_pick_local_repo_rejects_stale_index(tmp_path, db):

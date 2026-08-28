@@ -118,6 +118,24 @@ def has_uncommitted_changes(local_path: Path) -> bool:
     return bool(result.stdout.strip())
 
 
+def discard_uncommitted_changes(local_path: Path) -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            ["git", "checkout", "--", "."],
+            cwd=local_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"Не удалось откатить изменения: {exc}"
+    if result.returncode != 0:
+        return False, f"git checkout -- . провалился:\n{result.stderr.strip()}"
+    return True, "Незакоммиченные правки в отслеживаемых файлах отменены."
+
+
 def current_commit_sha(local_path: Path) -> str | None:
     try:
         result = subprocess.run(
@@ -132,3 +150,47 @@ def current_commit_sha(local_path: Path) -> str | None:
     except (OSError, subprocess.TimeoutExpired):
         return None
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+def current_branch(local_path: Path) -> str | None:
+    """None в detached HEAD или если git не смог ответить — вызывающий код
+    должен считать это "неизвестно", не подставлять "main" по умолчанию
+    (см. BRANCHING gate ниже: push должен идти именно в ту ветку, что
+    реально стоит сейчас, не в жёстко зашитую "main", как раньше)."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=local_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    return None if branch in ("", "HEAD") else branch
+
+
+def create_topic_branch(local_path: Path, branch_name: str) -> tuple[bool, str]:
+    """`git checkout -b <branch_name>` от текущего HEAD — см.
+    app.tasks.branching.topic_branch_name. Не трогает рабочее дерево,
+    только заводит новую ветку и переключается на неё."""
+    try:
+        result = subprocess.run(
+            ["git", "checkout", "-b", branch_name],
+            cwd=local_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"Не удалось создать ветку: {exc}"
+    if result.returncode != 0:
+        return False, f"git checkout -b провалился:\n{result.stderr.strip()}"
+    return True, branch_name

@@ -9,6 +9,7 @@ ctx.provider здесь — то, что выбрал роутер для CHECK_
 from __future__ import annotations
 
 from app.providers.base import RunOptions
+from app.providers.tiers import AccountPriority, run_prompt_with_tier
 from app.tasks import project_context as ctxdata
 from app.tasks import scope as scope_util
 from app.tasks.pipeline import Step, StepContext
@@ -21,6 +22,9 @@ class LiteStep1Orchestrator(Step):
         parts = []
         for project in ctx.projects:
             parts.append(f"### {project.name}")
+            parts.append(
+                "**Продолжение с прошлой сессии (LAST_PROMPT.md):**\n" + ctxdata.gather_last_prompt(project)
+            )
             parts.append("**Реестр:**\n" + ctxdata.gather_registry(project))
             parts.append("**Тесты:**\n" + ctxdata.gather_tests(project))
             parts.append("**Логи:**\n" + ctxdata.gather_logs(project))
@@ -41,7 +45,9 @@ class LiteStep2Scout(Step):
             "Быстро просканируй и перечисли явные проблемы (без глубокого анализа, "
             "это Lite-режим). severity: critical/high/medium."
         )
-        result = ctx.provider.run_prompt(prompt, RunOptions(system="Ты — scout, быстрый скан кода."))
+        result = run_prompt_with_tier(
+            ctx, AccountPriority.DELEGATION, prompt, RunOptions(system="Ты — scout, быстрый скан кода.")
+        )
         ctx.state["scout_report"] = result.text
 
 

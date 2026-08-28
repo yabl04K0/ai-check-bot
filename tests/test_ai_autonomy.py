@@ -8,15 +8,26 @@ from __future__ import annotations
 from app.providers.ai_autonomy import (
     ai_command_auto_approve_enabled,
     ai_github_token_access_enabled,
+    ai_native_agents_enabled,
     job_needs_manual_approval,
     set_ai_command_auto_approve,
     set_ai_github_token_access,
+    set_ai_native_agents_enabled,
 )
 
 
 def test_both_flags_default_to_false(db):
     assert ai_github_token_access_enabled() is False
     assert ai_command_auto_approve_enabled() is False
+    assert ai_native_agents_enabled() is False
+
+
+def test_set_and_read_native_agents(db):
+    set_ai_native_agents_enabled(True)
+    assert ai_native_agents_enabled() is True
+
+    set_ai_native_agents_enabled(False)
+    assert ai_native_agents_enabled() is False
 
 
 def test_set_and_read_token_access(db):

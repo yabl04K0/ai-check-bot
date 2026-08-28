@@ -3,5 +3,6 @@ anthropic>=0.40.0
 apscheduler>=3.10
 sqlalchemy>=2.0
 httpx>=0.27
+socksio>=1.0
 python-dotenv>=1.0
 PyGithub>=2.3

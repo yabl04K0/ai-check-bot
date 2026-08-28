@@ -6,7 +6,7 @@ from telegram.ext import Application
 
 from app.bot import access_control
 from app.bot.error_handler import handle_error
-from app.bot.handlers import check, github, menu, projects, registry, settings_admin, start
+from app.bot.handlers import ai_chat, check, clarify, github, menu, projects, registry, settings_admin, start
 from app.config import Settings
 from app.providers.registry import ProviderRegistry
 
@@ -24,7 +24,7 @@ def build_application(settings: Settings) -> Application:
     # не-владельца бот дальше не пускает ни к одному хендлеру ниже.
     access_control.register(application)
 
-    for module in (start, menu, projects, check, registry, github, settings_admin):
+    for module in (start, menu, projects, check, registry, github, settings_admin, ai_chat, clarify):
         module.register(application)
 
     return application

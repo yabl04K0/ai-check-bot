@@ -119,3 +119,58 @@ def test_register_or_bump_ignore_deferred_moves_back_to_open(tmp_path):
     assert len(loaded.open) == 1
     assert loaded.open[0].attempts == 1
     assert loaded.open[0].severity == "high"
+
+
+def test_register_or_bump_catches_reworded_never_duplicate(tmp_path):
+    write_registry(
+        tmp_path,
+        Registry(
+            never=[
+                RegistryFinding(
+                    file_symbol="app/auth.py::validate_token",
+                    description="Токен не проверяется на None перед decode и вызывает "
+                    "AttributeError при пустом значении.",
+                    reason="не баг, decode сам кидает ValueError",
+                )
+            ]
+        ),
+    )
+    outcome = register_or_bump_finding(
+        tmp_path,
+        RegistryFinding(
+            file_symbol="app/auth.py:validate_token",
+            description="Токен не проверяется на None перед decode и вызывает "
+            "AttributeError при пустом значении",
+        ),
+    )
+    assert outcome == "deferred_skipped"
+    loaded = read_registry(tmp_path)
+    assert loaded.open == []
+    assert len(loaded.never) == 1
+
+
+def test_register_or_bump_does_not_merge_unrelated_finding_in_same_file(tmp_path):
+    write_registry(
+        tmp_path,
+        Registry(
+            never=[
+                RegistryFinding(
+                    file_symbol="app/auth.py::validate_token",
+                    description="Токен не проверяется на None.",
+                    reason="не баг",
+                )
+            ]
+        ),
+    )
+    outcome = register_or_bump_finding(
+        tmp_path,
+        RegistryFinding(
+            file_symbol="app/auth.py::refresh_session",
+            description="Сессия не обновляется при истечении TTL, юзера разлогинивает раньше времени.",
+            severity="high",
+        ),
+    )
+    assert outcome == "new"
+    loaded = read_registry(tmp_path)
+    assert len(loaded.open) == 1
+    assert len(loaded.never) == 1

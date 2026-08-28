@@ -156,3 +156,74 @@ def test_reconcile_orphaned_unblocks_queue_for_new_jobs(db):
         assert queue.is_busy() is False
         new_job = queue.enqueue(TaskType.CHECK_LITE, [p1])
         assert queue.next_queued().id == new_job.id
+
+
+def test_add_live_note_appends_timestamped_line(db):
+    with get_session() as session:
+        p1 = _make_project(session, "P1")
+        queue = JobQueue(session)
+        job = queue.enqueue(TaskType.CHECK_FULL, [p1])
+
+        queue.add_live_note(job, "первая заметка")
+        session.commit()
+
+        assert job.live_notes is not None
+        assert job.live_notes.startswith("[")
+        assert job.live_notes.endswith("первая заметка")
+
+
+def test_add_live_note_appends_to_existing_notes_with_newline(db):
+    with get_session() as session:
+        p1 = _make_project(session, "P1")
+        queue = JobQueue(session)
+        job = queue.enqueue(TaskType.CHECK_FULL, [p1])
+
+        queue.add_live_note(job, "первая")
+        queue.add_live_note(job, "вторая")
+        session.commit()
+
+        lines = job.live_notes.split("\n")
+        assert len(lines) == 2
+        assert lines[0].endswith("первая")
+        assert lines[1].endswith("вторая")
+
+
+def test_add_live_note_first_call_has_no_leading_newline(db):
+    with get_session() as session:
+        p1 = _make_project(session, "P1")
+        queue = JobQueue(session)
+        job = queue.enqueue(TaskType.CHECK_FULL, [p1])
+
+        queue.add_live_note(job, "единственная")
+
+        assert "\n" not in job.live_notes
+
+
+def test_is_busy_true_for_paused_question(db):
+    with get_session() as session:
+        p1 = _make_project(session, "P1")
+        queue = JobQueue(session)
+        job = queue.enqueue(TaskType.CHECK_FULL, [p1])
+        queue.mark_running(job)
+        job.status = JobStatus.PAUSED_QUESTION
+        session.commit()
+
+        assert queue.is_busy() is True
+        assert queue.next_queued() is None
+
+
+def test_reconcile_orphaned_marks_paused_question_as_error(db):
+    with get_session() as session:
+        p1 = _make_project(session, "P1")
+        queue = JobQueue(session)
+        job = queue.enqueue(TaskType.CHECK_FULL, [p1])
+        queue.mark_running(job)
+        job.status = JobStatus.PAUSED_QUESTION
+        session.commit()
+
+        orphaned = queue.reconcile_orphaned()
+        session.commit()
+
+        assert {j.id for j in orphaned} == {job.id}
+        assert job.status == JobStatus.ERROR
+        assert "перезапуском" in job.handover_note
